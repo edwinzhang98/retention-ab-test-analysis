@@ -288,7 +288,8 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
         a, b_ = c[mask & (c.version == G_T)], c[mask & (c.version == G_C)]
         return S.two_prop_test(a[key].sum(), len(a), b_[key].sum(), len(b_), alpha=C.ALPHA).to_dict()
 
-    # Negative control: players who never met a gate should retain equally if assignment was random.
+    # Approximate negative control: almost no player with fewer than 30 rounds can have met a gate (the exception
+    # is a flawless 29-round gate_30 player), so retention should roughly match if assignment was random.
     gate["negative_control"] = {name: {k: _by_version(mask, k) for k in ("retention_1", "retention_7")}
                                 for name, mask in (("never_reached_30", lt30), ("reached_30", ge30))}
     gate["retention_by_rounds_band"] = {name: {k: _by_version(mask, k) for k in ("retention_1", "retention_7")}

@@ -472,7 +472,8 @@ with risk_col:
   tests measure power, not heterogeneity, so they are not used as evidence.
 - **Gate experiment.** SRM WARNING on raw assignment counts ({p_text(gsrm['p_value'])}). The net excess sits among
   players with fewer than 15 rounds ({sgn(net_lt15, 0)}, {p_text(sbs['rounds_lt_15']['p_value'])}, a subset chosen
-  after seeing the warning). Players who never met a gate show D7 {abs(nc7['abs_lift']) * 100:.2f} pp lower in
+  after seeing the warning). Players with fewer than 30 rounds form an approximate negative control: almost none
+  can have met a gate (the exception is a flawless 29-round gate_30 player). Their D7 is {abs(nc7['abs_lift']) * 100:.2f} pp lower in
   gate_40 ({p_text(nc7['p_value'])}, borderline on its own). The result is not certified.
 - **Retention data.** One install cohort (no install dates); D1 / D7 mean "played on day 1 / day 7"; rounds are
   counted over 14 days and overlap the D7 window, so rounds vs retention is partly definitional; there is no level

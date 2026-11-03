@@ -727,8 +727,9 @@ linked, and the game's segment sizes will not transfer one-for-one to the app.</
               f"{num(sbs['rounds_lt_15']['net_excess_t'])} gate_40 installs among players with fewer than 15 rounds "
               f"({pval(sbs['rounds_lt_15']['p_value'])}, descriptive: a subset chosen after seeing the warning)",
               _status_chip(gsrm["status"])],
-             ["Gate test: negative control", f"Players with fewer than {GATE_LEVEL} rounds (met no gate) still differ "
-              f"on D7: {pp(nc7['abs_lift'], sign=True)}, {pval(nc7['p_value'])}, borderline on its own. Such gap as "
+             ["Gate test: negative control", f"Players with fewer than {GATE_LEVEL} rounds form an approximate negative "
+              f"control: almost none can have met a gate (the exception is a flawless {GATE_LEVEL - 1}-round "
+              f"gate_{GATE_LEVEL} player). Their D7 still differs: {pp(nc7['abs_lift'], sign=True)}, {pval(nc7['p_value'])}, borderline on its own. Such gap as "
               f"there is comes from the 15&ndash;{GATE_LEVEL - 1} band ({pp(b1529['abs_lift'], sign=True)}) rather than "
               f"the &lt; 15 band where the net excess sits ({pp(b15['abs_lift'], sign=True)}), though the two bands' "
               f"gaps are not distinguishable from each other ({pval(bgap['p_value'])})", _chip("warn", "Borderline")],
@@ -807,7 +808,7 @@ linked, and the game's segment sizes will not transfer one-for-one to the app.</
         # Subsets by rounds played were chosen after seeing the warning: descriptive p-values, no status label.
         strata = [("rounds_lt_15", "Fewer than 15 rounds"),
                   ("rounds_15_29", f"15&ndash;{GATE_LEVEL - 1} rounds"),
-                  ("rounds_lt_30", f"Fewer than {GATE_LEVEL} rounds (the two rows above: never met a gate)"),
+                  ("rounds_lt_30", f"Fewer than {GATE_LEVEL} rounds (the two rows above: approximately gate-free)"),
                   ("rounds_ge_30", f"{GATE_LEVEL}+ rounds (could have reached level {GATE_LEVEL})")]
         srm_rows = [[label, num(s["n_t"]), num(s["n_c"]), _signed(s["net_excess_t"], 0),
                      pct(s["observed_share_t"], 2), pval(s["p_value"], prefix=False)]
@@ -1412,7 +1413,7 @@ hypothesis for a randomized test of more impressions per user (or a frequency ca
               f"retain far less (D7 about {pct(r_never, 0)} vs {pct(r_reach, 0)} for players who get further)"],
              [f"Players who never met a gate (fewer than {GATE_LEVEL} rounds, {pct(w_never, 0)} of installs)",
               pp(dec["within_never_reached_30"], sign=True), not_gate,
-              f"their D7 difference ({pp(nc7['abs_lift'], sign=True)}) &times; their share; they met neither gate"],
+              f"their D7 difference ({pp(nc7['abs_lift'], sign=True)}) &times; their share; almost none can have met a gate"],
              [f"Players who could meet the gate ({GATE_LEVEL}+ rounds, {pct(w_reach, 0)} of installs)",
               f"{pp(eff, sign=True)}<br><span class='sub'>{c} CI {ci_pp(*eff_ci)}</span>", could_be,
               f"their D7 difference ({pp(b30['abs_lift'], sign=True)}, {c} CI "
@@ -1466,7 +1467,8 @@ average {num(pg['mean_capped_29_t'], 2)} in gate_40 vs {num(pg['mean_capped_29_c
 (Mann&ndash;Whitney {pval(pg['mannwhitney_p'])}), and gate_40's engagement curve sits below gate_30's before any gate.
 This is the same imbalance seen as a distribution, not independent evidence: among players with fewer than
 {GATE_LEVEL} rounds the difference gives {pval(pg['mannwhitney_p_within_lt_30'])}.</li>
-<li><b>Negative control:</b> players with fewer than {GATE_LEVEL} rounds met no gate in either version, yet D7 is
+<li><b>Negative control:</b> players with fewer than {GATE_LEVEL} rounds form an approximate negative control:
+almost none can have met a gate (the exception is a flawless {GATE_LEVEL - 1}-round gate_{GATE_LEVEL} player). D7 is
 {pp(abs(nc7['abs_lift']))} lower in gate_40 ({c} CI {ci_pp(nc7['abs_ci_low'], nc7['abs_ci_high'], sign=True)};
 {pval(nc7['p_value'])}). That is borderline on its own; it carries weight only because the sample-ratio warning
 independently says the arms are not comparable. Such gap as there is comes from the 15&ndash;{GATE_LEVEL - 1} band
@@ -1481,7 +1483,8 @@ the SRM and the player-mix part, but not this gap.</li>
           "with a pointwise 95% band. In the shaded region (before any gate) the versions are identical, so a gap "
           "there reflects who is in each arm, not a gate effect.")}
 {self.fig("gate_negative_control", "each row is the gate_40 &minus; gate_30 D7 difference within a group of players, "
-          f"with its {c} CI. The grey diamonds are players who never met a gate (fewer than {GATE_LEVEL} rounds, then "
+          f"with its {c} CI. The grey diamonds are players with fewer than {GATE_LEVEL} rounds, almost none of whom "
+          f"can have met a gate (then "
           f"split into &lt; 15 and 15&ndash;{GATE_LEVEL - 1}): they should sit on 0. The filled dot is the naive "
           f"all-player result; the hollow dot is players who could meet the gate ({GATE_LEVEL}+ rounds).")}
 <p>Conclusion: most likely assignment or logging added low-engagement installs to gate_40 (or dropped them from
@@ -1783,9 +1786,9 @@ read any re-test only after it passes the daily 50/50 group-size check.</p></div
              "the treatment can influence it, comparing arms within its segments no longer compares like with like; "
              "such cuts are exploratory and must not be used as controls."),
             ("Negative control",
-             f"A group in which the treatment cannot have had an effect, here players with fewer than {GATE_LEVEL} "
-             "rounds, who never met a gate. If the arms still differ there, the difference comes from who is in each "
-             "arm or from chance, not from the treatment."),
+             f"Here, players with fewer than {GATE_LEVEL} rounds form an approximate negative control: almost none "
+             f"can have met a gate (the exception is a flawless {GATE_LEVEL - 1}-round gate_{GATE_LEVEL} player). "
+             "A difference between arms there is a diagnostic of imbalance or chance."),
             ("Incremental conversions, last-touch attribution and holdouts",
              f"Incremental conversions are those that would not have happened without the ads (lift &times; users who "
              f"saw ads). Last-touch (here also any-touch) attribution credits every conversion of an exposed user to "

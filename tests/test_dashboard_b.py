@@ -657,7 +657,7 @@ def test_p5_every_dimension_renders_with_the_story_wording():
         rerun(at)
         assert_catalog_defaults(at, [key])
     text = page_text(at).lower()
-    for banned in ("odds ratio", "breslow"):       # CMH only as standardized lift (saturation: WITHDRAWN guard)
+    for banned in ("odds ratio", "breslow"):       # CMH only as standardized lift (covered by WITHDRAWN)
         assert banned not in text, banned
     assert_no_withdrawn(at, "p5 exposure forest")
     mh = [HET[d]["sensitivity_stratified"]["mh_risk_diff"] * 100 for d in ("most_ads_day", "most_ads_hour",

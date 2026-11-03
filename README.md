@@ -83,7 +83,7 @@ The app has seven pages in presentation order. Each page opens with the question
 - **Main tests.** A two-proportion z-test with a Newcombe CI for the difference and a log-RR CI for relative lift, plus a count-level bootstrap as a cross-check.
 - **Power.** Judged at the smallest lift worth acting on (10% relative, an explicit assumption), never at the observed effect.
 - **Heterogeneity.** One interaction test per dimension (odds scale). Segment-vs-rest contrasts in percentage points (Agresti–Caffo intervals) with Holm / BH correction.
-- **Gate experiment.** Arm sizes by rounds band, negative controls (players who never met a gate), and an exact decomposition of the D7 gap into "player mix", "never met a gate" and "could be the gate". D1 and engagement guardrails are read where the gate can act. The re-test is sized at a pre-registered threshold.
+- **Gate experiment.** Arm sizes by rounds band, approximate negative controls (players with fewer than 30 rounds, almost none of whom can have met a gate), and an exact decomposition of the D7 gap into "player mix", "never met a gate" and "could be the gate". D1 and engagement guardrails are read where the gate can act. The re-test is sized at a pre-registered threshold.
 
 **Assumptions** are logged one per line, each with how to validate it: [docs/assumptions.md](docs/assumptions.md).
 

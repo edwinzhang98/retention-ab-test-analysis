@@ -344,7 +344,7 @@ def test_p2_data_sanity() -> None:
     strata = strata_table().set_index("Players, by rounds in first 14 days")
     assert "Status" not in strata.columns
     sbs = GATE["srm_by_stratum"]
-    rows = (("All players", None), ("< 30 rounds (never met a gate)", "rounds_lt_30"),
+    rows = (("All players", None), ("< 30 rounds (approximately gate-free)", "rounds_lt_30"),
             ("· of which < 15 rounds", "rounds_lt_15"), ("· of which 15–29 rounds", "rounds_15_29"),
             ("30+ rounds (could have reached level 30)", "rounds_ge_30"))
     assert list(strata.index) == [label for label, _ in rows]

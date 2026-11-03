@@ -686,7 +686,7 @@ md("""
 code('''
 raw_rounds = c_raw["sum_gamerounds"]
 # Disjoint rounds bands that add up to all players (raw assignment counts, before the outlier rule).
-# "fewer than 30 rounds" (the first two bands together: players who never met a gate) is kept only
+# "fewer than 30 rounds" (the first two bands together: almost none can have met a gate) is kept only
 # for the reconciliation with reports/results.json in section 10.
 BANDS = {"fewer than 15 rounds": raw_rounds < 15, "15–29 rounds": raw_rounds.between(15, 29),
          "30 or more rounds": raw_rounds >= 30}
@@ -748,7 +748,7 @@ cat["gate_engagement_gap"].fig.show()
 md("""
 **Reading (gate):** the raw assignment counts, [[gate_counts]] (gate_30 vs gate_40), give p = [[gate_srm_p]] against 50/50: below the 0.01 warning line, above the 0.001 failure line, so the status is **WARNING**. The rounds bands locate the [[gate_excess_raw]] extra installs in the raw log: a net excess of [[excess_lt15]] among players with fewer than 15 rounds ([[lt15_counts]], p = [[lt15_p]]), [[ex1529_s]] at 15–29 rounds (p = [[b1529_p]], balanced in number) and [[ex30_s]] at 30+ rounds ([[ge30_counts]], p = [[ge30_p]]). These p-values are descriptive, because the bands were chosen after seeing the warning: they say where the net excess sits, not that each band passed or failed a test. Play before level 30 tells the same story from another angle: rounds capped at 29 average [[pregate_means]] (gate_30 vs gate_40; Mann-Whitney p = [[pregate_p]]), and the chart shows gate_40's curve below gate_30's well before the first gate. That is the same imbalance seen as a distribution, not independent evidence: among players with fewer than 30 rounds alone, the difference is p = [[pregate_lt30_p]]. The gate cannot act on players with fewer than 15 rounds, where the net excess sits, so most likely assignment or logging added low-engagement installs to gate_40 (or dropped them from gate_30); Engineering confirms the cause. Rounds are measured after assignment, so this localizes the problem rather than proving its cause.
 
-**What this means for the gate readout:** it is not certified. `03_ab_test` follows up with a negative control (D7 among players with fewer than 30 rounds, who never met a gate) and splits the naive D7 gap into the part the gate could explain and the parts it cannot (recommendation R5). Cookie Cats has no pre-assignment fields, so the sample ratio and play before the first gate are the only randomization checks available.
+**What this means for the gate readout:** it is not certified. Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate (the exception is a flawless 29-round gate_30 player). `03_ab_test` follows up with their D7 and splits the naive D7 gap into the part the gate could explain and the parts it cannot (recommendation R5). Cookie Cats has no pre-assignment fields, so the sample ratio and play before the first gate are the only randomization checks available.
 """)
 
 # ------------------------------------------------------------------------------- 9. published

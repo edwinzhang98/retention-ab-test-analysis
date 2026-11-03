@@ -302,8 +302,8 @@ how_to_read(f"""
 **What this page is.** The one-screen summary: the headline numbers, the answer to each question, and a link to
 the page with the evidence. Every number comes from the same analysis run as the report.
 
-**The number cards.** The big number is the measured value. The grey line under it is the **95% confidence
-interval (CI)** shows the effect sizes compatible with the data. If ads had no effect, a difference this large
+**The number cards.** The big number is the measured value. The grey line under it shows the **95% confidence
+interval (CI)**: the effect sizes compatible with the data. If ads had no effect, a difference this large
 would be very unlikely. Hover the small question mark for the exact definition.
 
 **pp vs %.** Going from {fmt_pct(t['rate_c'])} to {fmt_pct(t['rate_t'])} is a gain of

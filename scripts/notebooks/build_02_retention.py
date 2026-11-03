@@ -268,8 +268,8 @@ CELLS = [
       should target first.
     - **Decision owner:** Growth PM with the Game PM and the Onboarding PM.
     - **What would change the answer:** if retention were flat across segments, or the at-risk segment were small,
-      onboarding would not be the first place to invest. If the version gap were as large as the engagement gap, the
-      gate position would be the main lever.
+      onboarding would not be the first place to invest. A larger version gap would deserve a closer look, but
+      comparing association gaps cannot show whether changing the gate or improving onboarding would achieve more.
     """),
     # ------------------------------------------------------------------ data
     md("""
@@ -747,7 +747,8 @@ CELLS = [
     3. **Pre-gate play.** Rounds capped at 29 are lower in gate_40 (p = {{pregate_p}}). This is the same imbalance seen
        as a distribution, not independent evidence: within players with fewer than 30 rounds it is p =
        {{pregate_lt30_p}}.
-    4. **Negative control.** Players with fewer than 30 rounds never met a gate, yet their D7 is {{nc_abs}} lower in
+    4. **Negative control.** Players with fewer than 30 rounds form an approximate negative control: almost none can
+       have met a gate (the exception is a flawless 29-round gate_30 player). Their D7 is {{nc_abs}} lower in
        gate_40 (95% CI {{nc_lo}} to just below 0, p = {{nc_p}}). That is borderline on its own; it carries weight only
        because the sample-ratio warning independently says the arms are not comparable. Such gap as there is comes
        from the 15–29 band ({{b1529_d7}} pp, p = {{b1529_p}}, balanced in number) rather than the band with fewer than

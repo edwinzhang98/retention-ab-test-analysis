@@ -279,7 +279,7 @@ st.markdown(
     "not separate checks with a verdict of their own.")
 sbs = gate["srm_by_stratum"]
 STRATA = (("All players", srm_gate, "The pre-specified check above"),
-          ("< 30 rounds (never met a gate)", sbs["rounds_lt_30"], POST_HOC),
+          ("< 30 rounds (approximately gate-free)", sbs["rounds_lt_30"], POST_HOC),
           ("· of which < 15 rounds", sbs["rounds_lt_15"], POST_HOC),
           ("· of which 15–29 rounds", sbs["rounds_15_29"], POST_HOC),
           ("30+ rounds (could have reached level 30)", sbs["rounds_ge_30"], POST_HOC))
@@ -314,7 +314,9 @@ nc7 = gate["negative_control"]["never_reached_30"]["retention_7"]
 st.caption(f"These are raw assignment counts, so gate_40's excess here is {srm_gate['n_t'] - srm_gate['n_c']}. The "
            f"retention comparisons use the cleaned data, where it is "
            f"{gate['best_case_for_gate_40']['excess_players_gate_40']} (the dropped player was in gate_30). Players "
-           f"who never met a gate also show D7 {abs(nc7['abs_lift']) * 100:.2f} pp lower in gate_40 "
+           "with fewer than 30 rounds form an approximate negative control: almost none can have met a gate "
+           "(the exception is a flawless 29-round gate_30 player). Their D7 is "
+           f"{abs(nc7['abs_lift']) * 100:.2f} pp lower in gate_40 "
            f"({p_text(nc7['p_value'])}, borderline on its own); page 6 shows where that gap sits.")
 band = gate["retention_by_rounds_band"]
 n29, d7_1528 = band["rounds_29"]["retention_7"], band["rounds_15_28"]["retention_7"]

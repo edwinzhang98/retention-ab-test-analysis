@@ -53,7 +53,7 @@ CAPS = [100, 250, 500, 1000, 2000, NO_CAP]
 ALPHAS = [0.10, 0.05, 0.01]
 BANDS = {"rounds_lt_15": "< 15 rounds",
          "rounds_15_29": "15–29 rounds",
-         "rounds_lt_30": "< 30 rounds (never met a gate)",
+         "rounds_lt_30": "< 30 rounds (approximately gate-free)",
          "rounds_ge_30": "30+ rounds (could have reached level 30)"}
 
 
@@ -274,8 +274,9 @@ st.caption(f"Rounds capped at 29 (play before any gate): mean {PG['mean_capped_2
 st.subheader("3 · How much of the D7 gap could the gate explain?")
 c1, c2, c3, c4 = st.columns(4)
 kpi(c1, "Negative control", pp(ncr["abs_lift"]), f"D7, < 30 rounds · {p_eq(ncr['p_value'])}",
-    help="D7 difference among players with < 30 rounds, who never met a gate in either version, so their retention "
-         f"should not differ by version. 95% CI {ci(ncr['abs_ci_low'], ncr['abs_ci_high'])}: borderline on its own.")
+    help="Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate "
+         "(the exception is a flawless 29-round gate_30 player), so their retention should approximately match by "
+         f"version. D7 95% CI {ci(ncr['abs_ci_low'], ncr['abs_ci_high'])}: borderline on its own.")
 kpi(c2, f"Without the net {ncx['excess_removed']:,}", pp(ncx["retention_7"]["abs_lift"]),
     f"D7, < 30 rounds · {p_eq(ncx['retention_7']['p_value'])}",
     help=f"The negative control after removing the net {ncx['excess_removed']:,} extra < 15-round installs from "
@@ -292,7 +293,7 @@ kpi(c4, "Best case for gate_40", pp(BEST["d7_diff_if_excess_removed"]), f"95% CI
 
 nc_rows = pd.DataFrame([   # the catalog's gate_negative_control rows (default view = catalog chart)
     {"label": "All players (naive result)", "role": "main", **g7},
-    {"label": "Never met a gate: < 30 rounds", "role": "control", **ncr},
+    {"label": "Approximately gate-free: < 30 rounds", "role": "control", **ncr},
     {"label": "of which < 15 rounds (net excess sits here)", "role": "control", **band7["rounds_lt_15"]},
     {"label": "of which 15–29 rounds (balanced in number)", "role": "control", **band7["rounds_15_29"]},
     {"label": "Could meet the gate: 30+ rounds", "role": "other", **band7["rounds_ge_30"]},
@@ -541,8 +542,9 @@ reason the 30+ part of the gap is called "the part the gate could explain", not 
 rounds. In the grey zone (before any gate) the versions are identical by design, so the curve should hug 0; it sits
 below 0 because gate_40 has extra low-round installs. It is the same imbalance, not a second piece of evidence.
 
-**Negative control.** Players with fewer than 30 rounds never met a gate, so their D7 should not differ by version. A
-gap there points at the imbalance or at chance, not at the gate. Here it is borderline ({p_eq(ncr['p_value'])}). Such
+**Negative control.** Players with fewer than 30 rounds form an approximate negative control: almost none can have
+met a gate (the exception is a flawless 29-round gate_30 player), so their D7 should approximately match by version.
+A gap there is a diagnostic of imbalance or chance. Here it is borderline ({p_eq(ncr['p_value'])}). Such
 gap as there is comes from the 15–29 band rather than the < 15 band where the net excess sits, though the two bands'
 gaps are not distinguishable from each other ({p_eq(BGD['p_value'])}).
 

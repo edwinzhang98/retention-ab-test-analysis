@@ -614,7 +614,7 @@ md("""
 | Power | Minimum detectable effect (MDE) at {{power}} power via Cohen's h; power at the smallest lift worth acting on ({{sesoi_rel}} relative, a placeholder in `config.yaml`), never at the observed effect; sample size by split | What the design could detect, and what the next test needs. An MDE describes the design; it is never compared with an observed estimate |
 | Business | Incremental conversions; share of ad-arm conversions that are incremental (1 − 1/risk ratio) and the last-touch overstatement it implies, with its CI; breakeven CPM; cost of an always-on holdout | No revenue or cost in the data, so value per conversion is an explicit assumption |
 | Heterogeneity | One interaction likelihood-ratio test per dimension (odds scale); then each segment's lift vs the other segments' (percentage-point scale: raw difference, Agresti–Caffo CI and p), Holm-corrected; per-segment "lift ≠ 0" tests as description only; a standardized (Mantel–Haenszel) lift as a sensitivity check | Asks "does the lift *differ*?", controls false positives, and checks that small arm imbalances don't drive the headline |
-| Gate integrity | SRM on the raw assignment log; where the extra installs sit by rounds played (descriptive); pre-gate play; a negative control (players who never met a gate); a decomposition of the D7 and D1 gaps; a best-case bound for gate_40; guardrails among players who could meet the gate | Separates the part of the gap the gate could explain from what the unbalanced assignment produced |
+| Gate integrity | SRM on the raw assignment log; where the extra installs sit by rounds played (descriptive); pre-gate play; an approximate negative control (players with fewer than 30 rounds, almost none of whom can have met a gate); a decomposition of the D7 and D1 gaps; a best-case bound for gate_40; guardrails among players who could meet the gate | Separates the part of the gap the gate could explain from what the unbalanced assignment produced |
 
 All statistics come from `src/stats.py`; every bootstrap uses seed {{seed}}.
 """)
@@ -1291,7 +1291,7 @@ md("""
 
 - **Novelty effect.** New ads often get a burst of attention that fades (ad fatigue, wear-out). Without timestamps we can't tell whether +{{ad_lift}} pp is a steady state or an early peak, so the incremental conversions are for *this flight*, not a run-rate. An always-on PSA holdout (R1) would show whether lift decays.
 - **Duration.** Flight dates aren't in the data. All seven weekdays appear, but we can't confirm the test covered whole weeks, or that it wasn't stopped early after a peek. Next test: a fixed duration of at least two full weeks, set up front.
-- **Multiple comparisons.** One primary comparison (conversion rate, analysed before any segment) carries the decision. The interaction tests and the {{n_contrasts}} segment-vs-rest contrasts in A11–A13 are exploratory and corrected (Bonferroni across dimensions, Holm across segments); anything interesting there gets its own pre-registered test.
+- **Multiple comparisons.** One primary comparison (conversion rate, analysed before any segment) carries the decision. The three original interaction tests (peak day, peak hour and exposure bucket) use a Bonferroni adjustment, and the {{n_contrasts}} segment-vs-rest contrasts in A11–A13 use Holm within each dimension. The later daypart and Night-exclusion checks are descriptive and not covered by the Bonferroni adjustment; anything interesting there gets its own pre-registered test.
 - **Interference.** PSA users may still see the brand's ads in other channels, so the lift is "this campaign vs a public-service ad in the same slots". If anything, that understates the effect of advertising vs no advertising at all.
 """)
 
@@ -1392,14 +1392,14 @@ md("""
 
 **Why stratifying on rounds is allowed here when stratifying on total ads (A3) is not.** Ads can change how long a user stays from the first impression, so exposure can be caused by the treatment. Below level 30 the two game versions are identical, so whether a player ever plays 30 rounds cannot depend on the gate (given rounds ≥ levels): it behaves like a pre-treatment trait. It is an approximation: a gate_30 player who cleared 29 levels in exactly 29 rounds would already face the gate while counted below 30. Such players are few (no pile-up at 29 rounds: {{r29_n40}} gate_40 vs {{r29_n30}} gate_30 players), and leaving out everyone with exactly 29 rounds, the 15–28 band still shows {{b1528_d7}} pp D7 (95% CI {{b1528_lo}} to {{b1528_hi}}; B4.3). The strata are close to, not exactly, gate-free. That is why the gate's share of the gap is called "the part the gate could explain" (B4.4), never an estimate of its effect.
 
-For players with < 30 rounds the two versions are the same game, so their numbers and their retention should not differ by version. That gives three checks that don't involve the gate at all, then a decomposition of the D7 gap.
+Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate (the exception is a flawless 29-round gate_30 player), so their numbers and their retention should approximately match by version. That gives three approximate checks, then a decomposition of the D7 gap.
 
 **B4.1 Where are the extra installs?** Arm sizes by rounds played, raw assignment log.
 """)
 
 code('''
 STRATA = {"rounds_lt_15": ("fewer than 15 rounds", log["sum_gamerounds"] < 15),
-          "rounds_15_29": ("15-29 rounds (never met a gate)", log["sum_gamerounds"].between(15, 29)),
+          "rounds_15_29": ("15–29 rounds (almost none could have met a gate)", log["sum_gamerounds"].between(15, 29)),
           "rounds_lt_30": ("fewer than 30 rounds (the two bands above)", log["sum_gamerounds"] < 30),
           "rounds_ge_30": ("30+ rounds (could meet the gate)", log["sum_gamerounds"] >= 30)}
 srm_rows = []
@@ -1456,7 +1456,7 @@ md("""
 chart("gate_engagement_gap")
 
 md("""
-**B4.3 Negative control, by rounds band.** Players who never reached level 30 met no gate in either version, so their retention should not differ by version.
+**B4.3 Negative control, by rounds band.** Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate (the exception is a flawless 29-round gate_30 player), so their retention should approximately match by version.
 """)
 
 code('''
@@ -1517,7 +1517,7 @@ assert S.srm_check(r29.n_t, r29.n_c, C.INTENDED_GATE40_SHARE)["p_value"] > C.ALP
 table(pd.DataFrame([{
     "players": label, "gate_30 / gate_40 players": f"{r.n_c:,} / {r.n_t:,}", "D7 gate_30": r.rate_c, "D7 gate_40": r.rate_t,
     "difference (pp)": r.abs_lift * 100, "95% CI (pp)": ci_txt(r.abs_ci_low, r.abs_ci_high, 3), "p": r.p_value,
-} for label, r in (("< 30 rounds: never met a gate (negative control)", nc7),
+} for label, r in (("< 30 rounds: approximately gate-free (negative control)", nc7),
                    ("... of which < 15 rounds (where the net excess sits)", b15),
                    ("... of which 15-29 rounds (balanced in number)", b1529),
                    ("... 15-29 without the 29-round edge case (15-28 rounds)", b1528),
@@ -1527,7 +1527,7 @@ table(pd.DataFrame([{
 ''')
 
 md("""
-**Reading.** Players with < 30 rounds never met a gate, yet D7 is {{nc_d7_abs}} pp lower in gate_40 ({{nc_d7}} pp, 95% CI {{nc_d7_lo}} to {{nc_d7_hi}}, p = {{nc_d7_p}}). That is **borderline on its own**; it carries weight only because the sample-ratio warning independently says the arms are not comparable. Such gap as there is comes from the 15–29 band ({{b1529_d7}} pp, p = {{b1529_p}}, balanced in number) rather than the < 15 band where the net excess sits ({{b15_d7}} pp, p = {{b15_p}}), though the two bands' gaps are not distinguishable from each other (p = {{band_gap_p}}). Removing the net {{ncx_removed}} extra < 15-round installs (as if none of them ever returned) moves it only to {{ncx_d7}} pp (95% CI {{ncx_lo}} to {{ncx_hi}}, p = {{ncx_p}}). So the extra installs explain the SRM and the player-mix part of the gap, but not this one. Players with 30+ rounds, who could meet the gate, show {{re_d7}} pp (95% CI {{re_d7_lo}} to {{re_d7_hi}}, p = {{re_d7_p}}): a similar gap to the 15–29 band that never met a gate ({{b1529_d7}} pp, 95% CI {{b1529_lo}} to {{b1529_hi}}).
+**Reading.** Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate (the exception is a flawless 29-round gate_30 player). D7 is {{nc_d7_abs}} pp lower in gate_40 ({{nc_d7}} pp, 95% CI {{nc_d7_lo}} to {{nc_d7_hi}}, p = {{nc_d7_p}}). That is **borderline on its own**; it carries weight only because the sample-ratio warning independently says the arms are not comparable. Such gap as there is comes from the 15–29 band ({{b1529_d7}} pp, p = {{b1529_p}}, balanced in number) rather than the < 15 band where the net excess sits ({{b15_d7}} pp, p = {{b15_p}}), though the two bands' gaps are not distinguishable from each other (p = {{band_gap_p}}). Removing the net {{ncx_removed}} extra < 15-round installs (as if none of them ever returned) moves it only to {{ncx_d7}} pp (95% CI {{ncx_lo}} to {{ncx_hi}}, p = {{ncx_p}}). So the extra installs explain the SRM and the player-mix part of the gap, but not this one. Players with 30+ rounds, who could meet the gate, show {{re_d7}} pp (95% CI {{re_d7_lo}} to {{re_d7_hi}}, p = {{re_d7_p}}): a similar gap to players with 15–29 rounds, almost none of whom can have met a gate ({{b1529_d7}} pp, 95% CI {{b1529_lo}} to {{b1529_hi}}).
 """)
 
 chart("gate_negative_control")
@@ -1773,7 +1773,7 @@ md("""
 - **Only post-assignment fields** to segment on: day, hour and exposure describe *who* responded, not *what to change*; the exposure pattern is confounded by user activity.
 - **Fixed arm sizes:** the ad split is most likely a fixed quota, so the SRM test can't detect broken assignment in the ad experiment; exposure parity carries the weight, and its shapes differ a little.
 - **Unbalanced design:** the {{psa_share}} control makes the relative lift imprecise ({{ad_rel_lo}} to {{ad_rel_hi}}) and segment cuts noisy: as few as {{min_c_hour}} PSA users in one peak hour, and {{hour_zero_n}} hours ({{hour_zero_list}}, mostly night) with zero control conversions.
-- **Gate experiment:** the SRM warning and the borderline negative control are unresolved. The decomposition assumes rounds are logged correctly, that a player with fewer than 30 rounds never met a gate (an approximation: rounds ≥ levels, there is no level field, and at exactly 29 rounds a gate_30 player could already face the gate), and that players don't anticipate a gate. `sum_gamerounds` overlaps the D7 window.
+- **Gate experiment:** the SRM warning and the borderline negative control are unresolved. The decomposition assumes rounds are logged correctly and that players don't anticipate a gate. Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate (the exception is a flawless 29-round gate_30 player; rounds ≥ levels and there is no level field). `sum_gamerounds` overlaps the D7 window.
 - **Two products:** Cookie Cats is the company's mobile game, a different product from the app the ads ran in (no shared users), so segment sizes will not transfer one-for-one.
 - **External validity:** the ad data covers one 2021 flight and the game data one 2017 install cohort; other products and periods need their own tests.
 """)

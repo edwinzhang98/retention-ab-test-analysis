@@ -283,7 +283,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     band = g["retention_by_rounds_band"]
     rows = pd.DataFrame([
         {"label": "All players (naive result)", "role": "main", **g7},
-        {"label": "Never met a gate: < 30 rounds", "role": "control", **nc["never_reached_30"]["retention_7"]},
+        {"label": "Approximately gate-free: < 30 rounds", "role": "control", **nc["never_reached_30"]["retention_7"]},
         {"label": "of which < 15 rounds (net excess sits here)", "role": "control", **band["rounds_lt_15"]["retention_7"]},
         {"label": "of which 15–29 rounds (balanced in number)", "role": "control", **band["rounds_15_29"]["retention_7"]},
         {"label": "Could meet the gate: 30+ rounds", "role": "other", **band["rounds_ge_30"]["retention_7"]},
@@ -292,7 +292,8 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     b15, b1529, b30 = (band[k]["retention_7"] for k in ("rounds_lt_15", "rounds_15_29", "rounds_ge_30"))
     hi_txt = "just below 0" if -0.005 < ncr["abs_ci_high"] * 100 < 0 else num(ncr["abs_ci_high"] * 100)
     bgd = g["d7_band_gap_difference_15_29_vs_lt_15"]
-    tk = (f"Players with < 30 rounds met no gate in either version, yet gate_40 shows {sgn(ncr['abs_lift']*100)} pp D7 "
+    tk = ("Players with fewer than 30 rounds form an approximate negative control: almost none can have met a gate "
+          f"(the exception is a flawless 29-round gate_30 player). gate_40 shows {sgn(ncr['abs_lift']*100)} pp D7 "
           f"(CI {num(ncr['abs_ci_low']*100)} to {hi_txt}, {fmt_p(ncr['p_value'])}: borderline on its own). Such gap as there "
           f"is comes from players with 15–29 rounds ({sgn(b1529['abs_lift']*100)} pp, {fmt_p(b1529['p_value'])}) rather than "
           f"the < 15-round band where the net excess sits ({sgn(b15['abs_lift']*100)} pp), though the two bands' gaps are not "
