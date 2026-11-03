@@ -19,7 +19,7 @@ Raw data is read from `~/projects/data-projects/datasets/...` via `config.yaml` 
 4. **Retention (Cookie Cats)**: D1 / D7 overall, the D1→D7 funnel, segments by engagement depth (rounds bucket relative to the gate at level 30 / 40), first-day return status, and version.
 5. **Ad experiment (Marketing A/B)**: hypothesis, primary / secondary / guardrail metrics, SRM vs the intended 96/4 split, balance of exposure covariates, two-proportion z-test + Newcombe CI + count-level bootstrap, power / MDE (and what the 96/4 split costs us), incremental conversions and breakeven CPM, exposure-frequency dose-response (for the "double the budget?" question).
 6. **Heterogeneity**: lift by `most ads day` / `most ads hour` with a formal interaction test (LRT) plus Holm / BH correction across segments.
-7. **Gate experiment (Cookie Cats)**: same readout template; SRM fails, so it is handled as a trust issue.
+7. **Gate experiment (Cookie Cats)**: same readout template. It gets an SRM *warning* (p = 0.0086), which a negative-control check backs up, so the result is handled as uncertified.
 8. **Decision + recommendations**: each item states who, what, expected impact, how to measure, and risk.
 
 ## Expected outputs
@@ -30,10 +30,11 @@ Raw data is read from `~/projects/data-projects/datasets/...` via `config.yaml` 
 - Bootstrap / permutation framing from GitHub `xxtofff/Marketing-AB-Testing`.
 
 ## What I add (what the references usually skip)
-- An SRM check against the *intended* allocation, and the finding that Cookie Cats **fails** it.
+- SRM checks with a two-level rule (FAIL < 0.001, WARN < 0.01). Cookie Cats **warns**, and a negative control (players who never reached a gate) agrees. The ad test's 96.000 / 4.000 split is quota-exact, so its SRM "pass" is uninformative.
 - Power / MDE, including how much sensitivity the 96/4 split gives up versus 50/50.
 - Treating `total ads`, `most ads day` and `most ads hour` as **post-assignment** variables: their distributions differ by arm, so heterogeneity is labelled exploratory and is never used as a covariate.
-- An interaction test plus multiple-comparison correction, instead of eyeballing 7 + 24 segment lifts.
+- A further round of methods checks mid-project. It led to segment-vs-rest contrasts, power at the smallest lift worth acting on (instead of post-hoc power), a negative-control check, and the "lift lives in heavy users" framing in place of a saturation claim.
+- One interaction test per dimension, then segment-vs-rest contrasts with multiple-comparison correction, instead of eyeballing 7 + 24 segment lifts.
 - Converting lift into incremental conversions and a breakeven CPM, with the value per conversion as an explicit, adjustable assumption (the data has no revenue).
 - An answer to "double the budget?" that says what the data **can't** tell us, and proposes the test that would.
 - A stakeholder readout, metric definitions, a DQ log and an assumptions log.
@@ -43,4 +44,4 @@ Raw data is read from `~/projects/data-projects/datasets/...` via `config.yaml` 
 - **Outlier**: drop the single player with 49,854 rounds (≈3,500 rounds/day over 14 days, so not humanly plausible). Retention proportions are unaffected, and the sensitivity check is in the DQ doc.
 - **Value per conversion**: the data has no revenue. Use **$50 as an illustrative default**, labelled everywhere and adjustable in the dashboard. The headline business number is *incremental conversions*, not dollars.
 - **Optional CTR branch** (Avazu / Criteo): not done. The prompt says to do it only when applying to ad-tech roles.
-- **Cookie Cats SRM failure**: not a stop condition. The decision (keep gate at 30) is the conservative default either way; the readout says the result can't be certified until assignment is debugged.
+- **Cookie Cats SRM warning**: not a stop condition. The decision (keep gate at 30) is the conservative default either way; the readout says the result can't be certified until assignment is debugged.

@@ -1,0 +1,181 @@
+check,sql_value,python_value,abs_diff,match,tolerance,sql_file,python_source
+stg_marketing_ab: rows,588101,588101,0.0,True,0.0,01_stg_marketing_ab.sql,pandas: src.data.clean_marketing(raw CSV)
+stg_marketing_ab: distinct user_id,588101,588101,0.0,True,0.0,01_stg_marketing_ab.sql,results.json data_quality.marketing.unique_user_id
+stg_marketing_ab: rows identical to pandas on all 7 columns,588101,588101,0.0,True,0.0,01_stg_marketing_ab.sql,pandas: src.data.clean_marketing(raw CSV)
+ad readout: users (ad),564577,564577,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.test.n_t
+ad readout: users (psa),23524,23524,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.test.n_c
+ad readout: conversions (ad),14423,14423,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.test.conv_t
+ad readout: conversions (psa),420,420,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.test.conv_c
+ad readout: conversion rate (ad),0.025546559636683747,0.025547,4.403633162529397e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.test.rate_t
+ad readout: conversion rate (psa),0.01785410644448223,0.017854,1.0644448223198766e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.test.rate_c
+ad readout: absolute lift,0.007692453192201517,0.007692,4.531922015169401e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.test.abs_lift
+ad readout: relative lift,0.4308506402222583,0.430851,3.5977774170969923e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.test.rel_lift
+ad readout: pooled z statistic,7.3700781265454145,7.370078,1.26545414147472e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.test.z
+ad readout: 95% Wald CI low,0.0059509324316110055,0.005951,6.756838899415335e-08,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.wald_ci[0]
+ad readout: 95% Wald CI high,0.009433973952792028,0.009434,2.604720797209914e-08,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.wald_ci[1]
+ad readout: significant at 5%,True,True,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.test.p_value < test.alpha
+ad readout: avg ads per user (ad),24.823365103431417,24.823365,1.0343141809698864e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.groups.ad.mean_ads
+ad readout: avg ads per user (psa),24.761137561639178,24.761138,4.3836082141979205e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.groups.psa.mean_ads
+ad readout: impressions (ad),14014701,14014701,0.0,True,0.0,02_conversion_by_group.sql,results.json ad.business.impressions_ad_group
+ad readout: incremental conversions,4342.982145893556,4342.982146,1.064445314113982e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.business.incremental_conversions.point
+ad readout: incremental share of ad conversions,0.3011150347288051,0.301115,3.472880505395182e-08,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.business.share_of_ad_conversions_incremental
+ad readout: breakeven CPM in USD (assumed value per conversion),15.494380314976237,15.49438,3.149762370924236e-07,True,5.009999999999999e-07,02_conversion_by_group.sql,results.json ad.business.breakeven_cpm_usd.point
+SRM marketing_ab: n treatment,564577,564577,0.0,True,0.0,03_srm_check.sql,results.json ad.srm.n_t
+SRM marketing_ab: n control,23524,23524,0.0,True,0.0,03_srm_check.sql,results.json ad.srm.n_c
+SRM marketing_ab: intended treatment share,0.96,0.96,0.0,True,5.009999999999999e-07,03_srm_check.sql,results.json ad.srm.intended_share_t
+SRM marketing_ab: expected treatment,564576.96,564576.96,0.0,True,5.009999999999999e-07,03_srm_check.sql,results.json ad.srm.expected_t
+SRM marketing_ab: chi-square statistic,7.084950835855237e-08,0.0,7.084950835855237e-08,True,5.009999999999999e-07,03_srm_check.sql,results.json ad.srm.chi2
+SRM marketing_ab: flag (p < 0.001),False,False,0.0,True,0.0,03_srm_check.sql,results.json ad.srm.flag (threshold 0.001)
+SRM marketing_ab: warning (p < 0.01),False,False,0.0,True,0.0,03_srm_check.sql,results.json ad.srm.p_value < warn_threshold (0.01)
+SRM cookie_cats: n treatment,45489,45489,0.0,True,0.0,03_srm_check.sql,results.json cookie.gate.srm.n_t
+SRM cookie_cats: n control,44699,44699,0.0,True,0.0,03_srm_check.sql,results.json cookie.gate.srm.n_c
+SRM cookie_cats: intended treatment share,0.5,0.5,0.0,True,5.009999999999999e-07,03_srm_check.sql,results.json cookie.gate.srm.intended_share_t
+SRM cookie_cats: expected treatment,45094.0,45094.0,0.0,True,5.009999999999999e-07,03_srm_check.sql,results.json cookie.gate.srm.expected_t
+SRM cookie_cats: chi-square statistic,6.919989355568369,6.919989,3.555683685263489e-07,True,5.009999999999999e-07,03_srm_check.sql,results.json cookie.gate.srm.chi2
+SRM cookie_cats: flag (p < 0.001),False,False,0.0,True,0.0,03_srm_check.sql,results.json cookie.gate.srm.flag (threshold 0.001)
+SRM cookie_cats: warning (p < 0.01),True,True,0.0,True,0.0,03_srm_check.sql,results.json cookie.gate.srm.p_value < warn_threshold (0.01)
+lift by most_ads_day: segments,7,7,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day: segments with identical users and conversions per arm,7,7,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day: segments with matching z statistic,7,7,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day: segments significant at 5% before correction,5,5,0.0,True,0.0,04_lift_by_day_and_hour.sql,results.json ad.heterogeneity.most_ads_day.n_sig_unadjusted
+lift by most_ads_day = Monday: absolute lift,0.01068265813039988,0.01068265813039988,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Tuesday: absolute lift,0.015992495350280182,0.015992495350280182,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Wednesday: absolute lift,0.00959654807330666,0.00959654807330666,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Thursday: absolute lift,0.0014066647336733323,0.0014066647336733323,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Friday: absolute lift,0.006162032549430728,0.006162032549430728,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Saturday: absolute lift,0.007310764563580343,0.007310764563580343,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_day = Sunday: absolute lift,0.004024866225054536,0.004024866225054536,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_day.csv
+lift by most_ads_hour: segments,24,24,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour: segments with identical users and conversions per arm,24,24,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour: segments with matching z statistic,24,24,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour: segments significant at 5% before correction,8,8,0.0,True,0.0,04_lift_by_day_and_hour.sql,results.json ad.heterogeneity.most_ads_hour.n_sig_unadjusted
+lift by most_ads_hour = 0: absolute lift,0.019212657750988887,0.019212657750988887,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 1: absolute lift,0.013434452871072589,0.013434452871072589,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 2: absolute lift,0.007569875776397516,0.007569875776397516,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 3: absolute lift,-0.0008112446314693499,-0.0008112446314693499,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 4: absolute lift,0.01585014409221902,0.01585014409221902,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 5: absolute lift,0.0215633423180593,0.0215633423180593,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 6: absolute lift,0.023173803526448364,0.023173803526448364,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 7: absolute lift,0.010043671706972698,0.010043671706972698,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 8: absolute lift,0.00923875988292521,0.00923875988292521,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 9: absolute lift,0.008713582858178453,0.008713582858178453,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 10: absolute lift,0.008372110417285835,0.008372110417285835,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 11: absolute lift,0.007913324347618258,0.007913324347618258,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 12: absolute lift,0.007148706925228683,0.007148706925228683,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 13: absolute lift,0.008473345899721839,0.008473345899721839,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 14: absolute lift,0.012523979977207129,0.012523979977207129,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 15: absolute lift,0.004680711789054076,0.004680711789054076,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 16: absolute lift,0.0028379992653851834,0.0028379992653851834,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 17: absolute lift,0.00829157765512591,0.00829157765512591,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 18: absolute lift,0.002293024274501905,0.002293024274501905,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 19: absolute lift,0.0022953362378516085,0.0022953362378516085,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 20: absolute lift,0.012632050891923086,0.012632050891923086,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 21: absolute lift,0.006972932556375367,0.006972932556375367,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 22: absolute lift,0.010097338341613148,0.010097338341613148,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by most_ads_hour = 23: absolute lift,0.010046205686422675,0.010046205686422675,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_most_ads_hour.csv
+lift by exposure_bucket: segments,8,8,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket: segments with identical users and conversions per arm,8,8,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket: segments with matching z statistic,8,8,0.0,True,0.0,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket: segments significant at 5% before correction,3,3,0.0,True,0.0,04_lift_by_day_and_hour.sql,results.json ad.heterogeneity.exposure_bucket.n_sig_unadjusted
+lift by exposure_bucket = 1-5: absolute lift,-0.00028629984429228957,-0.00028629984429228957,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 6-10: absolute lift,-0.001881905436940303,-0.001881905436940303,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 11-20: absolute lift,0.000207183510502678,0.000207183510502678,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 21-35: absolute lift,0.002716885201896096,0.002716885201896096,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 36-50: absolute lift,0.017315798454217407,0.017315798454217407,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 51-100: absolute lift,0.058566476616611685,0.058566476616611685,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 101-200: absolute lift,0.07038963741351505,0.07038963741351505,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+lift by exposure_bucket = 200+: absolute lift,0.0007392522524730383,0.0007392522524730383,0.0,True,1e-09,04_lift_by_day_and_hour.sql,reports/tables/ad_lift_by_exposure_bucket.csv
+stg_cookie_cats: rows (outlier excluded),90188,90188,0.0,True,0.0,05_stg_cookie_cats.sql,results.json data_quality.cookie.rows_clean
+stg_cookie_cats: distinct user_id,90188,90188,0.0,True,0.0,05_stg_cookie_cats.sql,pandas: src.data.clean_cookie(raw CSV)
+stg_cookie_cats: rows identical to pandas on all 8 columns,90188,90188,0.0,True,0.0,05_stg_cookie_cats.sql,pandas: src.data.clean_cookie(raw CSV)
+retention overall: players,90188,90188,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.overall.players
+retention overall: D1 retention,0.4452144409455803,0.445214,4.409455803267015e-07,True,5.009999999999999e-07,06_retention_by_segment.sql,results.json cookie.overall.retention_1
+retention overall: D7 retention,0.1860557945624695,0.186056,2.0543753048718472e-07,True,5.009999999999999e-07,06_retention_by_segment.sql,results.json cookie.overall.retention_7
+retention by rounds_bucket: segments with identical player counts,7,7,0.0,True,0.0,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 0: D1 retention,0.021782674011016526,0.021782674011016526,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 0: D7 retention,0.007260891337005508,0.007260891337005508,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 1-4: D1 retention,0.06502735322316847,0.06502735322316847,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 1-4: D7 retention,0.0129716316056624,0.0129716316056624,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 5-14: D1 retention,0.24018251541187322,0.24018251541187322,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 5-14: D7 retention,0.034124557060336874,0.034124557060336874,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 15-29: D1 retention,0.5004111278607647,0.5004111278607647,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 15-29: D7 retention,0.09366863094422366,0.09366863094422366,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 30-39: D1 retention,0.6501021102791015,0.6501021102791015,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 30-39: D7 retention,0.1570796460176991,0.1570796460176991,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 40-99: D1 retention,0.7781138670430866,0.7781138670430866,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 40-99: D7 retention,0.3113530953821335,0.3113530953821335,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 100+: D1 retention,0.9001997602876548,0.9001997602876548,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by rounds_bucket = 100+: D7 retention,0.7108270075908909,0.7108270075908909,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_rounds_bucket.csv
+retention by d1_status: segments with identical player counts,2,2,0.0,True,0.0,06_retention_by_segment.sql,reports/tables/retention_by_d1_status.csv
+retention by d1_status = Did not return Day 1: D1 retention,0.0,0.0,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_d1_status.csv
+retention by d1_status = Did not return Day 1: D7 retention,0.07190966323573499,0.07190966323573499,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_d1_status.csv
+retention by d1_status = Returned Day 1: D1 retention,1.0,1.0,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_d1_status.csv
+retention by d1_status = Returned Day 1: D7 retention,0.3282942744004184,0.3282942744004184,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_d1_status.csv
+retention by version: segments with identical player counts,2,2,0.0,True,0.0,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
+retention by version = gate_30: D1 retention,0.4481979462627799,0.4481979462627799,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
+retention by version = gate_30: D7 retention,0.19018322557551623,0.19018322557551623,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
+retention by version = gate_40: D1 retention,0.44228274967574577,0.44228274967574577,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
+retention by version = gate_40: D7 retention,0.18200004396667327,0.18200004396667327,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
+funnel: Played at least 1 round,86194,86194,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Played at least 1 round].players
+funnel: Returned on Day 1,40153,40153,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Returned on Day 1].players
+funnel: Returned on Day 1 and Day 7,13182,13182,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Returned on Day 1 and Day 7].players
+D7 gap across rounds_bucket segments (pp),70.35661162538854,70.356612,3.746114600744477e-07,True,5.009999999999999e-07,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[rounds_bucket].gap_pp
+D7 gap across d1_status segments (pp),25.638461116468342,25.638461,1.1646834252587723e-07,True,5.009999999999999e-07,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[d1_status].gap_pp
+D7 gap across version segments (pp),0.818318160884296,0.818318,1.6088429599658838e-07,True,5.009999999999999e-07,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[version].gap_pp
+gate D7: players gate_40,45489,45489,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_7.n_t
+gate D7: players gate_30,44699,44699,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_7.n_c
+gate D7: retained gate_40,8279,8279,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_7.conv_t
+gate D7: retained gate_30,8501,8501,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_7.conv_c
+gate D7: rate gate_40,0.18200004396667327,0.182,4.396667327433157e-08,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_7.rate_t
+gate D7: rate gate_30,0.19018322557551623,0.190183,2.2557551623836325e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_7.rate_c
+gate D7: absolute diff (gate_40 - gate_30),-0.00818318160884296,-0.008183,1.8160884296056223e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_7.abs_lift
+gate D7: relative diff,-0.04302788315888384,-0.043028,1.1684111615728465e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_7.rel_lift
+gate D7: pooled z statistic,-3.1574100858819936,-3.15741,8.588199351677872e-08,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_7.z
+gate D7: significant at 5%,True,True,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_7.p_value < alpha
+gate D7: 95% Wald CI low,-0.013263369909537494,-0.013263369909537494,0.0,True,1e-09,07_gate_experiment.sql,src.stats.wald_diff_ci on the results.json counts
+gate D7: 95% Wald CI high,-0.003102993308148426,-0.003102993308148426,0.0,True,1e-09,07_gate_experiment.sql,src.stats.wald_diff_ci on the results.json counts
+gate D1: players gate_40,45489,45489,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_1.n_t
+gate D1: players gate_30,44699,44699,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_1.n_c
+gate D1: retained gate_40,20119,20119,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_1.conv_t
+gate D1: retained gate_30,20034,20034,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_1.conv_c
+gate D1: rate gate_40,0.44228274967574577,0.442283,2.5032425421400717e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_1.rate_t
+gate D1: rate gate_30,0.4481979462627799,0.448198,5.373722006263293e-08,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_1.rate_c
+gate D1: absolute diff (gate_40 - gate_30),-0.005915196587034155,-0.005915,1.965870341548437e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_1.abs_lift
+gate D1: relative diff,-0.013197732466998069,-0.013198,2.6753300193076146e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_1.rel_lift
+gate D1: pooled z statistic,-1.787103509763628,-1.787104,4.902363719416769e-07,True,5.009999999999999e-07,07_gate_experiment.sql,results.json cookie.gate.retention_1.z
+gate D1: significant at 5%,False,False,0.0,True,0.0,07_gate_experiment.sql,results.json cookie.gate.retention_1.p_value < alpha
+gate D1: 95% Wald CI low,-0.012402509778563664,-0.012402509778563664,0.0,True,1e-09,07_gate_experiment.sql,src.stats.wald_diff_ci on the results.json counts
+gate D1: 95% Wald CI high,0.0005721166044953541,0.0005721166044953541,0.0,True,1e-09,07_gate_experiment.sql,src.stats.wald_diff_ci on the results.json counts
+DQ marketing_ab: rows,588101,588101,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.rows_raw
+DQ marketing_ab: duplicate_user_id,0,0,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.duplicate_user_id
+DQ marketing_ab: null_cells,0,0,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.nulls (sum over the 6 data columns)
+DQ marketing_ab: invalid_test_group,0,0,0.0,True,0.0,08_data_quality_checks.sql,pandas on the raw CSV
+DQ marketing_ab: invalid_most_ads_day,0,0,0.0,True,0.0,08_data_quality_checks.sql,pandas on the raw CSV
+DQ marketing_ab: invalid_most_ads_hour,0,0,0.0,True,0.0,08_data_quality_checks.sql,pandas on the raw CSV
+DQ marketing_ab: total_ads_min,1,1,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.total_ads_min
+DQ marketing_ab: total_ads_median,13.0,13.0,0.0,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.marketing.total_ads_p50
+DQ marketing_ab: total_ads_p99,202.0,202.0,0.0,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.marketing.total_ads_p99
+DQ marketing_ab: total_ads_p999,499.9000000000233,499.9,2.3305801732931286e-11,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.marketing.total_ads_p999
+DQ marketing_ab: total_ads_max,2065,2065,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.total_ads_max
+DQ marketing_ab: users_over_1000_ads,36,36,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.marketing.users_over_1000_ads
+DQ cookie_cats: rows,90189,90189,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.rows_raw
+DQ cookie_cats: duplicate_user_id,0,0,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.duplicate_user_id
+DQ cookie_cats: null_cells,0,0,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.nulls (sum over all columns)
+DQ cookie_cats: invalid_version,0,0,0.0,True,0.0,08_data_quality_checks.sql,pandas on the raw CSV
+DQ cookie_cats: sum_gamerounds_min,0,0,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_min
+DQ cookie_cats: sum_gamerounds_median,16.0,16.0,0.0,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_p50
+DQ cookie_cats: sum_gamerounds_p99,493.0,493.0,0.0,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_p99
+DQ cookie_cats: sum_gamerounds_p999,1073.6240000000107,1073.624,1.0686562745831907e-11,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_p999
+DQ cookie_cats: sum_gamerounds_max,49854,49854,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_max_raw
+DQ cookie_cats: zero_round_players,3994,3994,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.zero_round_players
+DQ cookie_cats: players_over_10000_rounds,1,1,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.outliers_dropped (count)
+DQ cookie_cats: rows_after_outlier_exclusion,90188,90188,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.rows_clean
+DQ cookie_cats: sum_gamerounds_max_after_exclusion,2961,2961,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.rounds_max_clean
+DQ cookie_cats: d1_retention_all_rows,0.4452095044850259,0.44521,4.955149741081577e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.retention_raw.d1
+DQ cookie_cats: d1_retention_after_exclusion,0.4452144409455803,0.445214,4.409455803267015e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.retention_clean.d1
+DQ cookie_cats: d7_retention_all_rows,0.1860648194347426,0.186065,1.8056525741272367e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.retention_raw.d7
+DQ cookie_cats: d7_retention_after_exclusion,0.1860557945624695,0.186056,2.0543753048718472e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.retention_clean.d7
+DQ cookie_cats: mean_rounds_all_rows,51.8724567297564,51.872457,2.7024359638971873e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.mean_rounds_raw
+DQ cookie_cats: mean_rounds_after_exclusion,51.32025324876924,51.320253,2.487692398744912e-07,True,5.009999999999999e-07,08_data_quality_checks.sql,results.json data_quality.cookie.mean_rounds_clean
+DQ cookie_cats: d7_without_d1,3599,3599,0.0,True,0.0,08_data_quality_checks.sql,results.json data_quality.cookie.d7_without_d1
+DQ: checks with status FAIL,0,0,0.0,True,0.0,08_data_quality_checks.sql,expected: every hard DQ rule passes
