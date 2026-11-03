@@ -29,7 +29,11 @@ def _r(x, nd=6):
     if isinstance(x, (list, tuple)):
         return [_r(v, nd) for v in x]
     if isinstance(x, (float, np.floating)):
-        return None if np.isnan(x) else round(float(x), nd)
+        if np.isnan(x):
+            return None
+        if 0 < abs(x) < 1e-4:          # tiny p-values: keep 3 significant digits, never print 0
+            return float(f"{x:.3g}")
+        return round(float(x), nd)
     if isinstance(x, (np.integer,)):
         return int(x)
     if isinstance(x, (np.bool_,)):
@@ -91,8 +95,9 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     wald = S.wald_diff_ci(ct, nt, cc, nc, alpha=C.ALPHA)
     boot = S.bootstrap_two_prop(ct, nt, cc, nc, n_boot=C.N_BOOT, seed=C.SEED)
     b_abs, b_rel = S.percentile_ci(boot["abs_lift"], C.ALPHA), S.percentile_ci(boot["rel_lift"], C.ALPHA)
-    srm = S.srm_check(nt, nc, C.INTENDED_AD_SHARE)
-    chi2 = sps.chi2_contingency([[ct, nt - ct], [cc, nc - cc]], correction=False)
+    srm = S.srm_check(nt, nc, C.INTENDED_AD_SHARE, C.SRM_FAIL_P, C.SRM_WARN_P)
+    srm.update(S.quota_exactness(nt, nc, C.INTENDED_AD_SHARE))
+    chi2 = sps.chi2_contingency([[ct, nt - ct], [cc, nc - cc]], correction=False)  # = z^2, same test
 
     # balance of post-assignment variables (descriptive, not randomization checks)
     balance = [S.balance_test(m, col, "test_group") for col in ("most_ads_day", "most_ads_hour", "exposure_bucket")]
@@ -103,7 +108,11 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     p_c = cc / nc
     mde_now = S.mde(p_c, nt, nc, C.ALPHA, C.POWER)
     mde_5050 = S.mde(p_c, (nt + nc) // 2, (nt + nc) // 2, C.ALPHA, C.POWER)
-    power_obs = S.achieved_power(p_c, ct / nt, nt, nc, C.ALPHA)
+    half = (nt + nc) // 2
+    power_at = {str(rel): {"rel": rel, "abs": rel * p_c,
+                           "power_current_split": S.achieved_power(p_c, p_c * (1 + rel), nt, nc, C.ALPHA),
+                           "power_5050_same_total": S.achieved_power(p_c, p_c * (1 + rel), half, half, C.ALPHA)}
+                for rel in (0.05, C.SESOI_REL, 0.20)}
     n_needed_9604 = S.required_total_n(p_c, mde_now["mde_abs"], C.INTENDED_AD_SHARE, C.ALPHA, C.POWER)
     n_needed_5050 = S.required_total_n(p_c, mde_now["mde_abs"], 0.5, C.ALPHA, C.POWER)
     # smallest effect of business interest: 10% relative lift
@@ -115,29 +124,62 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     impr_per_incr = impressions_t / incr["point"]
     v = C.VALUE_PER_CONVERSION
     breakeven_cpm = {k: x * v / impressions_t * 1000 for k, x in incr.items()}
-    share_attributable = res.abs_lift / res.rate_t  # share of ad-group conversions that are incremental
+    share_attributable = res.abs_lift / res.rate_t  # = 1 - 1/RR: share of ad-arm conversions that are incremental
+    af_ci = [1 - 1 / (1 + res.rel_ci_low), 1 - 1 / (1 + res.rel_ci_high)]
+    holdout = {"share": C.HOLDOUT_SHARE,
+               "users_per_588k_flight": (nt + nc) * C.HOLDOUT_SHARE,
+               "conversions_forgone": (nt + nc) * C.HOLDOUT_SHARE * res.abs_lift,
+               "value_forgone_usd": (nt + nc) * C.HOLDOUT_SHARE * res.abs_lift * v}
 
-    # heterogeneity
+    # heterogeneity: one omnibus interaction test per dimension, then segment-vs-rest
+    # contrasts (the heterogeneity question) and per-segment lifts (descriptive)
     seg = {}
-    for dim, order in (("most_ads_day", C.DAY_ORDER), ("most_ads_hour", list(range(24))),
-                       ("exposure_bucket", C.EXPOSURE_LABELS)):
+    dims = (("most_ads_day", C.DAY_ORDER), ("most_ads_hour", list(range(24))),
+            ("daypart", C.DAYPART_ORDER), ("exposure_bucket", C.EXPOSURE_LABELS))
+    for dim, order in dims:
         tables = {meth: S.segment_lifts(cells, dim, T, CTRL, alpha=C.ALPHA, method=meth, order=order)
                   for meth in ("none", "bonferroni", "holm", "fdr_bh")}
         holm = tables["holm"]
         seg[dim] = {
             "lrt": S.interaction_lrt(cells, dim),
-            "stratified": S.stratified_summary(cells, dim, T, CTRL),
+            "sensitivity_stratified": S.stratified_summary(cells, dim, T, CTRL),
             "n_segments": len(holm),
-            "n_sig_unadjusted": int((tables["none"]["p_value"] < C.ALPHA).sum()),
-            "n_sig_bonferroni": int(tables["bonferroni"]["significant_adj"].sum()),
-            "n_sig_holm": int(holm["significant_adj"].sum()),
-            "n_sig_bh": int(tables["fdr_bh"]["significant_adj"].sum()),
+            "lift_positive": {m: int((tables[m]["p_adj"] < C.ALPHA).sum()) for m in tables},
+            "differs_from_rest": {m: int((tables[m]["p_vs_rest_adj"] < C.ALPHA).sum()) for m in tables},
+            "segments_differing_holm": holm.loc[holm["differs_adj"], dim].astype(str).tolist(),
             "max_lift_segment": str(holm.loc[holm["abs_lift"].idxmax(), dim]),
             "max_lift_pp": float(holm["abs_lift"].max() * 100),
             "min_lift_segment": str(holm.loc[holm["abs_lift"].idxmin(), dim]),
             "min_lift_pp": float(holm["abs_lift"].min() * 100),
+            "min_control_users": int(holm["n_c"].min()),
+            "segments_with_zero_control_conversions": int((holm["conv_c"] == 0).sum()),
         }
         holm.to_csv(C.TABLES_DIR / f"ad_lift_by_{dim}.csv", index=False)
+    # the omnibus tests explore 3 dimensions (day, hour, exposure; daypart regroups hour)
+    seg["n_dimensions_explored"] = 3
+    seg["most_ads_day"]["lrt_p_bonferroni_3_dims"] = min(1.0, seg["most_ads_day"]["lrt"]["p_value"] * 3)
+    no_night = cells[cells["daypart"] != C.DAYPART_ORDER[0]]
+    night = cells[cells["daypart"] == C.DAYPART_ORDER[0]].groupby("test_group")[["users", "conversions"]].sum()
+    seg["daypart"]["lrt_excluding_night"] = S.interaction_lrt(no_night, "daypart")
+    seg["most_ads_hour"]["lrt_excluding_night"] = S.interaction_lrt(no_night, "most_ads_hour")
+    seg["daypart"]["night_counts"] = {g: {"users": int(r.users), "conversions": int(r.conversions)}
+                                      for g, r in night.iterrows()}
+    expo = S.segment_lifts(cells, "exposure_bucket", T, CTRL, alpha=C.ALPHA, order=C.EXPOSURE_LABELS)
+    expo["incremental_conversions"] = expo["abs_lift"] * expo["n_t"]
+    heavy = expo["exposure_bucket"].astype(str).isin(["36-50", "51-100", "101-200"])
+    seg["exposure_bucket"]["concentration"] = {
+        "share_users_le_20_ads": float((m["total_ads"] <= 20).mean()),
+        "share_ad_users_36_200": float(expo.loc[heavy, "n_t"].sum() / expo["n_t"].sum()),
+        "share_incremental_conversions_36_200": float(expo.loc[heavy, "incremental_conversions"].sum()
+                                                      / expo["incremental_conversions"].sum()),
+        "control_rate_lowest_bucket": float(expo["rate_c"].iloc[0]),
+        "control_rate_highest_bucket": float(expo["rate_c"].iloc[-1]),
+        "top_bucket_ci_pp": [float(expo["abs_ci_low"].iloc[-1] * 100), float(expo["abs_ci_high"].iloc[-1] * 100)],
+        "top_bucket_control_users": int(expo["n_c"].iloc[-1]),
+    }
+    shares = pd.crosstab(m["exposure_bucket"], m["test_group"], normalize="columns")
+    seg["exposure_bucket"]["arm_shares"] = {str(b): {"ad": float(r[T]), "psa": float(r[CTRL])}
+                                            for b, r in shares.iterrows()}
 
     out = {
         "groups": {g: {k: (float(v_) if k in ("mean_ads", "median_ads") else int(v_)) for k, v_ in row.items()}
@@ -150,20 +192,24 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
         "srm": srm,
         "balance": balance,
         "total_ads_mannwhitney_p": float(mw.pvalue), "total_ads_ks": {"stat": float(ks.statistic), "p_value": float(ks.pvalue)},
-        "power": {"mde_current": mde_now, "mde_if_5050_same_total": mde_5050, "achieved_power_at_observed": power_obs,
+        "power": {"mde_current": mde_now, "mde_if_5050_same_total": mde_5050,
+                  "smallest_lift_of_interest_rel": C.SESOI_REL, "power_at_relative_lift": power_at,
                   "total_n_for_current_mde_at_9604": n_needed_9604, "total_n_for_current_mde_at_5050": n_needed_5050,
                   "total_n_for_10pct_rel_lift": {str(k): v_ for k, v_ in n_needed_10pct.items()}},
         "business": {"value_per_conversion_usd": v, "impressions_ad_group": impressions_t,
                      "incremental_conversions": incr, "impressions_per_incremental_conversion": impr_per_incr,
                      "incremental_value_usd": {k: x * v for k, x in incr.items()},
-                     "breakeven_cpm_usd": breakeven_cpm, "share_of_ad_conversions_incremental": share_attributable},
+                     "breakeven_cpm_usd": breakeven_cpm, "share_of_ad_conversions_incremental": share_attributable,
+                     "share_of_ad_conversions_incremental_ci": af_ci,
+                     "last_touch_overstatement_x": ct / incr["point"],
+                     "always_on_holdout_cost": holdout},
         "heterogeneity": seg,
     }
     return out, {"boot": boot}
 
 
 # ====================================================================== retention + gate
-def cookie_analysis(c: pd.DataFrame) -> tuple[dict, dict]:
+def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
     overall = R.retention_rates(c).iloc[0].to_dict()
     funnel = R.funnel(c)
     by_rounds = R.retention_rates(c, "rounds_bucket")
@@ -179,7 +225,10 @@ def cookie_analysis(c: pd.DataFrame) -> tuple[dict, dict]:
     # gate experiment
     v = c.groupby("version").agg(players=("user_id", "size"), r1=("retention_1", "sum"), r7=("retention_7", "sum"))
     nt, nc = int(v.loc[G_T, "players"]), int(v.loc[G_C, "players"])
-    gate = {"players": {G_T: nt, G_C: nc}, "srm": S.srm_check(nt, nc, C.INTENDED_GATE40_SHARE)}
+    raw_t, raw_c = int((c_raw["version"] == G_T).sum()), int((c_raw["version"] == G_C).sum())
+    gate = {"players": {G_T: nt, G_C: nc}, "players_raw": {G_T: raw_t, G_C: raw_c},
+            # SRM is computed on raw assignment counts (before the outlier drop)
+            "srm": S.srm_check(raw_t, raw_c, C.INTENDED_GATE40_SHARE, C.SRM_FAIL_P, C.SRM_WARN_P)}
     boots = {}
     for key, col in (("retention_1", "r1"), ("retention_7", "r7")):
         res = S.two_prop_test(v.loc[G_T, col], nt, v.loc[G_C, col], nc, alpha=C.ALPHA)
@@ -190,8 +239,34 @@ def cookie_analysis(c: pd.DataFrame) -> tuple[dict, dict]:
                      "boot_share_ge_0": float((bt["abs_lift"] >= 0).mean()),
                      "mde": S.mde(res.rate_c, nt, nc, C.ALPHA, C.POWER)}
     rt, rc = c.loc[c.version == G_T, "sum_gamerounds"], c.loc[c.version == G_C, "sum_gamerounds"]
+    cap = float(c["sum_gamerounds"].quantile(0.999))
+    b_mean = S.bootstrap_mean_diff(rt, rc, C.N_BOOT_MEANS, C.SEED + 14)
+    b_wins = S.bootstrap_mean_diff(rt.clip(upper=cap), rc.clip(upper=cap), C.N_BOOT_MEANS, C.SEED + 15)
     gate["rounds"] = {"mean_t": float(rt.mean()), "mean_c": float(rc.mean()), "median_t": float(rt.median()),
-                      "median_c": float(rc.median()), "mannwhitney_p": float(sps.mannwhitneyu(rt, rc).pvalue)}
+                      "median_c": float(rc.median()), "mannwhitney_p": float(sps.mannwhitneyu(rt, rc).pvalue),
+                      "mean_diff": float(rt.mean() - rc.mean()), "mean_diff_boot_ci": list(S.percentile_ci(b_mean)),
+                      "winsor_cap_p999": cap, "winsor_mean_diff": float(rt.clip(upper=cap).mean() - rc.clip(upper=cap).mean()),
+                      "winsor_mean_diff_boot_ci": list(S.percentile_ci(b_wins)), "n_boot": C.N_BOOT_MEANS}
+
+    # Negative control: players with < 30 rounds never reached level 30, so they never met
+    # either gate. Their retention should not differ by version if assignment was random.
+    strata = {}
+    for name, mask in (("never_reached_30", c["sum_gamerounds"] < 30), ("reached_30", c["sum_gamerounds"] >= 30)):
+        sub = c[mask]
+        st = {}
+        for key in ("retention_1", "retention_7"):
+            a, b_ = sub[sub.version == G_T], sub[sub.version == G_C]
+            st[key] = S.two_prop_test(a[key].sum(), len(a), b_[key].sum(), len(b_), alpha=C.ALPHA).to_dict()
+        strata[name] = st
+    gate["negative_control"] = strata
+    gate["composition"] = {
+        "zero_round_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] == 0).mean()) for v_ in (G_T, G_C)},
+        "under_30_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] < 30).mean()) for v_ in (G_T, G_C)},
+    }
+    # Worst case: if gate_40's extra players were all junk that never came back, how big is the D7 gap?
+    excess = nt - nc
+    gate["worst_case_bound"] = {"excess_players_gate_40": int(excess),
+                                "d7_diff_if_excess_removed": float(v.loc[G_T, "r7"] / (nt - excess) - v.loc[G_C, "r7"] / nc)}
     # does the D7 gap sit with players who actually reached level 30? (descriptive)
     gate["d7_by_reached_30"] = (c.groupby(["reached_gate_30", "version"])["retention_7"].agg(["mean", "size"])
                                 .reset_index().assign(reached_gate_30=lambda d: d.reached_gate_30.astype(str))
@@ -219,10 +294,12 @@ def build_all(verbose: bool = True) -> dict:
     c.assign(rounds_bucket=c.rounds_bucket.astype(str)).to_parquet(C.PROCESSED_DIR / "fct_game_players.parquet", index=False)
 
     results = {"config": {"seed": C.SEED, "alpha": C.ALPHA, "power": C.POWER, "n_bootstrap": C.N_BOOT,
-                          "intended_ad_share": C.INTENDED_AD_SHARE, "value_per_conversion_usd": C.VALUE_PER_CONVERSION}}
+                          "n_bootstrap_means": C.N_BOOT_MEANS, "intended_ad_share": C.INTENDED_AD_SHARE,
+                          "value_per_conversion_usd": C.VALUE_PER_CONVERSION, "smallest_lift_of_interest_rel": C.SESOI_REL,
+                          "holdout_share": C.HOLDOUT_SHARE, "srm_fail_p": C.SRM_FAIL_P, "srm_warn_p": C.SRM_WARN_P}}
     results["data_quality"] = data_quality(m_raw, m, c_raw, c, c_out)
     results["ad"], ad_extra = ad_experiment(m, cells)
-    results["cookie"], cookie_boots = cookie_analysis(c)
+    results["cookie"], cookie_boots = cookie_analysis(c, c_raw)
 
     ad_extra["boot"].to_parquet(C.PROCESSED_DIR / "boot_ad_lift.parquet", index=False)
     pd.concat([b.assign(metric=k) for k, b in cookie_boots.items()]).to_parquet(

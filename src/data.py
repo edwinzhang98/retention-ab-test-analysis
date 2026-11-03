@@ -57,8 +57,9 @@ def clean_marketing(raw: pd.DataFrame) -> pd.DataFrame:
     df["exposure_bucket"] = pd.cut(
         df["total_ads"], bins=C.EXPOSURE_BINS, labels=C.EXPOSURE_LABELS
     )
+    df["daypart"] = df["most_ads_hour"].map(C.DAYPART_OF_HOUR)
     return df[["user_id", "test_group", "converted", "total_ads", "exposure_bucket",
-               "most_ads_day", "most_ads_hour"]]
+               "most_ads_day", "most_ads_hour", "daypart"]]
 
 
 def clean_cookie(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -84,4 +85,5 @@ def aggregate_ad_cells(df: pd.DataFrame) -> pd.DataFrame:
     )
     g["most_ads_day"] = g["most_ads_day"].astype(str)
     g["exposure_bucket"] = g["exposure_bucket"].astype(str)
+    g["daypart"] = g["most_ads_hour"].map(C.DAYPART_OF_HOUR)
     return g

@@ -6,7 +6,6 @@ Convention: "t" = treatment (ad / gate_40), "c" = control (psa / gate_30).
 """
 from __future__ import annotations
 
-import warnings
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -104,6 +103,18 @@ def bootstrap_two_prop(conv_t, n_t, conv_c, n_c, n_boot: int = 10_000, seed: int
     return pd.DataFrame({"rate_t": bt, "rate_c": bc, "abs_lift": bt - bc, "rel_lift": rel})
 
 
+def bootstrap_mean_diff(x_t, x_c, n_boot: int = 2_000, seed: int = 0) -> np.ndarray:
+    """User-level bootstrap of a difference in means (treatment - control).
+    Used for heavy-tailed metrics (rounds played), where it adds something over
+    a normal approximation."""
+    rng = np.random.default_rng(seed)
+    x_t, x_c = np.asarray(x_t, dtype=float), np.asarray(x_c, dtype=float)
+    out = np.empty(n_boot)
+    for b in range(n_boot):
+        out[b] = x_t[rng.integers(0, len(x_t), len(x_t))].mean() - x_c[rng.integers(0, len(x_c), len(x_c))].mean()
+    return out
+
+
 def percentile_ci(x, alpha: float = 0.05) -> tuple[float, float]:
     x = np.asarray(x, dtype=float)
     x = x[~np.isnan(x)]
@@ -131,8 +142,22 @@ def srm_check(n_t: int, n_c: int, intended_share_t: float, threshold: float = 0.
         "expected_t": float(exp[0]), "expected_c": float(exp[1]),
         "chi2": float(chi2), "p_value": float(p), "threshold": threshold,
         "warn_threshold": warn_threshold, "status": status,
-        "flag": bool(p < threshold),
+        "flag": status != "PASS",
     }
+
+
+def quota_exactness(n_t: int, n_c: int, intended_share_t: float) -> dict:
+    """How close is the split to the intended ratio, in users, versus what
+    independent random assignment would produce? A split that lands on the
+    nearest integer to the target is what a quota (or a trimmed export) looks
+    like; an SRM test cannot detect anything in that case."""
+    n = n_t + n_c
+    expected = n * intended_share_t
+    sd = float(np.sqrt(n * intended_share_t * (1 - intended_share_t)))
+    nearest = int(round(expected))
+    return {"deviation_users": float(n_t - expected), "sd_users_under_random_assignment": sd,
+            "is_nearest_integer_to_target": bool(n_t == nearest),
+            "prob_exactly_nearest_integer": float(stats.binom.pmf(nearest, n, intended_share_t))}
 
 
 # ------------------------------------------------------------------ power
@@ -176,18 +201,44 @@ def segment_lifts(cells: pd.DataFrame, by: str, t_label: str, c_label: str,
                   group_col: str = "test_group", users_col: str = "users",
                   conv_col: str = "conversions", alpha: float = 0.05,
                   method: str = "holm", order=None) -> pd.DataFrame:
-    """Per-segment two-proportion tests with multiple-comparison adjustment."""
+    """Per-segment results, two different questions, both with the chosen
+    multiple-comparison adjustment across segments:
+
+    1. "Is there a lift in this segment?"  -> p_value / p_adj / significant_adj
+       (two-proportion test of treatment vs control inside the segment).
+    2. "Is this segment's lift different from the other segments'?"  -> diff_vs_rest,
+       p_vs_rest / p_vs_rest_adj / differs_adj. This is the heterogeneity question.
+       Difference-in-differences (segment lift minus lift in all other segments)
+       with Agresti-Caffo adjusted proportions (+1 success, +1 failure per group),
+       so cells with 0 control conversions don't produce a zero variance.
+    """
     piv = cells.groupby([by, group_col], observed=True)[[users_col, conv_col]].sum().unstack(group_col)
+    tot = piv.sum()
+    zc = stats.norm.ppf(1 - alpha / 2)
     rows = []
     for seg, r in piv.iterrows():
-        res = two_prop_test(r[(conv_col, t_label)], r[(users_col, t_label)],
-                            r[(conv_col, c_label)], r[(users_col, c_label)], alpha=alpha)
+        kt, nt = r[(conv_col, t_label)], r[(users_col, t_label)]
+        kc, nc = r[(conv_col, c_label)], r[(users_col, c_label)]
+        res = two_prop_test(kt, nt, kc, nc, alpha=alpha)
         d = res.to_dict()
         d[by] = seg
+        groups = [(kt, nt), (kc, nc), (tot[(conv_col, t_label)] - kt, tot[(users_col, t_label)] - nt),
+                  (tot[(conv_col, c_label)] - kc, tot[(users_col, c_label)] - nc)]
+        ac = [((k + 1) / (n + 2), n + 2) for k, n in groups]
+        diff = (ac[0][0] - ac[1][0]) - (ac[2][0] - ac[3][0])
+        se = float(np.sqrt(sum(p_ * (1 - p_) / n_ for p_, n_ in ac)))
+        rest_t, rest_c = groups[2][0] / groups[2][1], groups[3][0] / groups[3][1]
+        d["lift_rest"] = rest_t - rest_c
+        d["diff_vs_rest"] = float(diff)
+        d["diff_vs_rest_ci_low"] = float(diff - zc * se)
+        d["diff_vs_rest_ci_high"] = float(diff + zc * se)
+        d["p_vs_rest"] = float(2 * stats.norm.sf(abs(diff / se)))
         rows.append(d)
     out = pd.DataFrame(rows)
     out["p_adj"] = adjust_pvalues(out["p_value"], method)
     out["significant_adj"] = out["p_adj"] < alpha
+    out["p_vs_rest_adj"] = adjust_pvalues(out["p_vs_rest"], method)
+    out["differs_adj"] = out["p_vs_rest_adj"] < alpha
     out["correction"] = method
     if order is not None:
         out[by] = pd.Categorical(out[by], categories=order, ordered=True)
@@ -200,25 +251,20 @@ def interaction_lrt(cells: pd.DataFrame, by: str, group_col: str = "test_group",
                     users_col: str = "users", conv_col: str = "conversions") -> dict:
     """Does the treatment effect differ across segments? Likelihood-ratio test of
     logit(conv) ~ group * segment vs group + segment (binomial GLM on counts).
-    One test for the whole dimension, so no multiple-comparison problem."""
+    With one cell per group x segment the interaction model is saturated, so the
+    LR statistic equals the deviance of the additive model (df = segments - 1).
+    One test per dimension; with several dimensions explored, compare the
+    p-values against an adjusted threshold (we explore 3: day, hour, exposure)."""
     g = cells.groupby([by, group_col], observed=True)[[users_col, conv_col]].sum().reset_index()
     g[by] = g[by].astype(str)
     g["fail"] = g[users_col] - g[conv_col]
     endog = g[[conv_col, "fail"]].to_numpy()
-    X_red = pd.get_dummies(g[[group_col, by]], drop_first=True).astype(float)
-    X_full = X_red.copy()
-    tcol = [c for c in X_red.columns if c.startswith(group_col)][0]
-    for c in [c for c in X_red.columns if c.startswith(by)]:
-        X_full[f"{tcol}:{c}"] = X_red[tcol] * X_red[c]
-    # The full model is saturated and some hour cells have 0 control conversions,
-    # which triggers (harmless for the LRT) separation / zero-df warnings.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        m_red = sm.GLM(endog, sm.add_constant(X_red), family=sm.families.Binomial()).fit()
-        m_full = sm.GLM(endog, sm.add_constant(X_full), family=sm.families.Binomial()).fit()
-    lr = 2 * (m_full.llf - m_red.llf)
-    df = X_full.shape[1] - X_red.shape[1]
-    return {"dimension": by, "lr_stat": float(lr), "df": int(df), "p_value": float(stats.chi2.sf(lr, df))}
+    X = pd.get_dummies(g[[group_col, by]], drop_first=True).astype(float)
+    m = sm.GLM(endog, sm.add_constant(X), family=sm.families.Binomial()).fit()
+    lr, df = float(m.deviance), int(round(m.df_resid))
+    sparse = int((g[conv_col] == 0).sum())
+    return {"dimension": by, "lr_stat": lr, "df": df, "p_value": float(stats.chi2.sf(lr, df)),
+            "cells_with_zero_conversions": sparse}
 
 
 def stratified_summary(cells: pd.DataFrame, by: str, t_label: str, c_label: str,

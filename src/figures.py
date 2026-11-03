@@ -144,19 +144,30 @@ def fig_bootstrap(draws: np.ndarray, ci: tuple[float, float], point: float, titl
 
 
 def fig_lift_forest(tab: pd.DataFrame, seg_col: str, title: str, subtitle: str | None = None,
-                    overall_lift: float | None = None, sig_col: str = "significant_adj",
+                    overall_lift: float | None = None, sig_col: str = "differs_adj",
                     seg_title: str = "", height: int | None = None, ci_cols=("abs_ci_low", "abs_ci_high"),
-                    min_n_c: int = 0) -> go.Figure:
-    """Dot + 95% CI per segment for the absolute lift (pp). Filled = significant
-    after the chosen correction; hollow = not. Segments with control n < min_n_c are flagged."""
+                    sig_label: str | None = None, nonsig_label: str | None = None) -> go.Figure:
+    """Dot + 95% CI per segment for the absolute lift (pp).
+    Filled vs hollow markers encode `sig_col`:
+      differs_adj      -> segment's lift differs from the other segments' (heterogeneity question; default)
+      significant_adj  -> segment's lift differs from zero"""
+    if sig_label is None:
+        sig_label = ("Lift differs from other segments (after correction)" if sig_col == "differs_adj"
+                     else "Lift ≠ 0 (after correction)")
+    if nonsig_label is None:
+        nonsig_label = ("Not distinguishable from other segments" if sig_col == "differs_adj"
+                        else "Lift not distinguishable from 0")
     t = tab.copy()
     t["seg_label"] = t[seg_col].astype(str)
     lo, hi = _pct(t[ci_cols[0]]), _pct(t[ci_cols[1]])
     y = t["seg_label"].tolist()
     fig = go.Figure()
     sig = t[sig_col].to_numpy(dtype=bool)
-    for flag, name, color, symbol in ((True, "Significant after correction", BLUE, "circle"),
-                                      (False, "Not significant after correction", GREY, "circle-open")):
+    has_rest = "diff_vs_rest" in t.columns
+    diff_rest = _pct(t["diff_vs_rest"]) if has_rest else np.full(len(t), np.nan)
+    p_rest = t["p_vs_rest_adj"].to_numpy() if has_rest else np.full(len(t), np.nan)
+    for flag, name, color, symbol in ((True, sig_label, BLUE, "circle"),
+                                      (False, nonsig_label, GREY, "circle-open")):
         idx = np.where(sig == flag)[0]
         if len(idx) == 0:
             continue
@@ -166,12 +177,14 @@ def fig_lift_forest(tab: pd.DataFrame, seg_col: str, title: str, subtitle: str |
             error_x=dict(type="data", symmetric=False, array=(hi - _pct(t["abs_lift"]))[idx],
                          arrayminus=(_pct(t["abs_lift"]) - lo)[idx], color=color, thickness=1.5, width=0),
             customdata=np.stack([t["rate_t"].to_numpy()[idx] * 100, t["rate_c"].to_numpy()[idx] * 100,
-                                 t["n_t"].to_numpy()[idx], t["n_c"].to_numpy()[idx], t["p_value"].to_numpy()[idx],
-                                 t["p_adj"].to_numpy()[idx], lo[idx], hi[idx]], axis=1),
-            hovertemplate="<b>%{y}</b><br>Lift %{x:.2f} pp (95% CI %{customdata[6]:.2f} to %{customdata[7]:.2f})"
+                                 t["n_t"].to_numpy()[idx], t["n_c"].to_numpy()[idx], t["p_adj"].to_numpy()[idx],
+                                 diff_rest[idx], p_rest[idx], lo[idx], hi[idx]], axis=1),
+            hovertemplate="<b>%{y}</b><br>Lift %{x:.2f} pp (95% CI %{customdata[7]:.2f} to %{customdata[8]:.2f})"
                           "<br>Treatment %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
                           "<br>Control %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
-                          "<br>p = %{customdata[4]:.4f} · adjusted p = %{customdata[5]:.4f}<extra></extra>",
+                          "<br>Lift ≠ 0: adjusted p = %{customdata[4]:.4f}"
+                          "<br>vs other segments: %{customdata[5]:+.2f} pp, adjusted p = %{customdata[6]:.4f}"
+                          "<extra></extra>",
         )
     fig.add_vline(x=0, line=dict(color=INK_2, width=1))
     if overall_lift is not None:
@@ -225,9 +238,9 @@ def fig_balance(users: pd.DataFrame, col: str, title: str, subtitle: str | None 
     return fig
 
 
-def fig_mde_by_split(p_c: float, total_n: int, current_share: float, observed_lift: float | None,
+def fig_mde_by_split(p_c: float, total_n: int, current_share: float, reference_lift: float | None,
                      alpha: float, power: float, title: str, subtitle: str | None = None,
-                     height: int = 400) -> go.Figure:
+                     height: int = 400, reference_label: str = "smallest lift worth acting on") -> go.Figure:
     """Minimum detectable lift (pp) as a function of the treatment share, for a fixed total sample."""
     shares = np.round(np.linspace(0.5, 0.99, 50), 3)
     shares = np.unique(np.append(shares, [current_share, 0.5, 0.8, 0.9]))
@@ -246,9 +259,9 @@ def fig_mde_by_split(p_c: float, total_n: int, current_share: float, observed_li
                     marker=dict(color=GREY, size=10, line=dict(color=SURFACE, width=2)),
                     text=[f"50/50: {half*100:.2f} pp"], textposition="top right", textfont=dict(color=INK_2),
                     hoverinfo="skip")
-    if observed_lift is not None:
-        fig.add_hline(y=observed_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
-        fig.add_annotation(x=52, y=observed_lift * 100, text=f"observed lift {observed_lift*100:.2f} pp",
+    if reference_lift is not None:
+        fig.add_hline(y=reference_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
+        fig.add_annotation(x=52, y=reference_lift * 100, text=f"{reference_label}: {reference_lift*100:.2f} pp",
                            showarrow=False, yanchor="bottom", xanchor="left", font=dict(size=11, color=ORANGE))
     _layout(fig, title, subtitle, height=height, xaxis_title="Share of users in treatment (%)",
             yaxis_title="Minimum detectable lift (pp)", legend=False)
@@ -256,10 +269,12 @@ def fig_mde_by_split(p_c: float, total_n: int, current_share: float, observed_li
     return fig
 
 
-def fig_power_curve(p_c: float, n_t: int, n_c: int, alpha: float, observed_lift: float | None,
+def fig_power_curve(p_c: float, n_t: int, n_c: int, alpha: float, reference_lift: float | None,
                     title: str, subtitle: str | None = None, max_lift_pp: float = 1.2,
-                    target_power: float = 0.8, height: int = 380) -> go.Figure:
-    """Probability of detecting a true lift of a given size with this sample."""
+                    target_power: float = 0.8, height: int = 380,
+                    reference_label: str = "smallest lift worth acting on") -> go.Figure:
+    """Probability of detecting a true lift of a given size with this sample
+    (a design property; never evaluated at the observed effect)."""
     lifts = np.linspace(0.0005, max_lift_pp / 100, 120)
     pw = [S.achieved_power(p_c, p_c + l, n_t, n_c, alpha) for l in lifts]
     fig = go.Figure()
@@ -268,9 +283,11 @@ def fig_power_curve(p_c: float, n_t: int, n_c: int, alpha: float, observed_lift:
     fig.add_hline(y=target_power * 100, line=dict(color=GREY, width=1))
     fig.add_annotation(x=max_lift_pp, y=target_power * 100, text=f"{target_power*100:.0f}% target",
                        showarrow=False, yanchor="bottom", xanchor="right", font=dict(size=11, color=INK_2))
-    if observed_lift is not None and observed_lift * 100 <= max_lift_pp:
-        fig.add_vline(x=observed_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
-        fig.add_annotation(x=observed_lift * 100, y=5, text=f"observed {observed_lift*100:.2f} pp",
+    if reference_lift is not None and reference_lift * 100 <= max_lift_pp:
+        pw_ref = S.achieved_power(p_c, p_c + reference_lift, n_t, n_c, alpha)
+        fig.add_vline(x=reference_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
+        fig.add_annotation(x=reference_lift * 100, y=5,
+                           text=f"{reference_label}: {reference_lift*100:.2f} pp → power {pw_ref*100:.0f}%",
                            showarrow=False, xanchor="left", xshift=4, font=dict(size=11, color=ORANGE))
     _layout(fig, title, subtitle, height=height, xaxis_title="True lift in conversion rate (pp)",
             yaxis_title="Power: chance of detecting it (%)", legend=False)
@@ -429,6 +446,34 @@ def fig_gate_bootstrap(boot: pd.DataFrame, gate: dict, title: str, subtitle: str
     _layout(fig, title, subtitle, height=height, xaxis_title="gate_40 − gate_30 retention (pp)",
             yaxis_title="Bootstrap draws (count)")
     fig.update_layout(barmode="overlay")
+    return fig
+
+
+def fig_effect_by_stratum(rows: pd.DataFrame, title: str, subtitle: str | None = None,
+                          xtitle: str = "gate_40 − gate_30 D7 retention (pp)", height: int = 340) -> go.Figure:
+    """Dot + 95% CI for an effect estimated in several strata.
+    rows columns: label, abs_lift, abs_ci_low, abs_ci_high, n_t, n_c, rate_t, rate_c, p_value, role
+    (role 'main' = blue filled, 'control' = grey hollow, 'other' = blue hollow)."""
+    fig = go.Figure()
+    styles = {"main": (BLUE, "circle"), "control": (GREY, "diamond-open"), "other": (BLUE, "circle-open")}
+    for _, r in rows.iterrows():
+        color, symbol = styles.get(r["role"], (BLUE, "circle"))
+        fig.add_scatter(
+            x=[r["abs_lift"] * 100], y=[r["label"]], mode="markers", name=r["label"], showlegend=False,
+            marker=dict(color=color, size=11, symbol=symbol, line=dict(width=2, color=color)),
+            error_x=dict(type="data", symmetric=False, array=[(r["abs_ci_high"] - r["abs_lift"]) * 100],
+                         arrayminus=[(r["abs_lift"] - r["abs_ci_low"]) * 100], color=color, thickness=1.5, width=0),
+            customdata=[[r["rate_t"] * 100, r["rate_c"] * 100, r["n_t"], r["n_c"], r["p_value"],
+                         r["abs_ci_low"] * 100, r["abs_ci_high"] * 100]],
+            hovertemplate="<b>%{y}</b><br>Difference %{x:.2f} pp (95% CI %{customdata[5]:.2f} to %{customdata[6]:.2f})"
+                          "<br>gate_40 %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
+                          "<br>gate_30 %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
+                          "<br>p = %{customdata[4]:.3f}<extra></extra>")
+    fig.add_vline(x=0, line=dict(color=INK_2, width=1))
+    _layout(fig, title, subtitle, height=height, xaxis_title=xtitle, legend=False)
+    fig.update_yaxes(categoryorder="array", categoryarray=rows["label"].tolist()[::-1], showgrid=False, type="category")
+    fig.update_xaxes(showgrid=True, gridcolor=GRID)
+    fig.update_layout(margin=dict(l=260))
     return fig
 
 
