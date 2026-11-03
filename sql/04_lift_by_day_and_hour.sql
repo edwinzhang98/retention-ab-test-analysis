@@ -59,7 +59,8 @@
 --             zero variance and a spurious contrast. In sparse cells the CI is
 --             therefore not centred on diff_vs_rest (its centre is diff_vs_rest_ac);
 --             in large cells the two differ very little. Same convention as
---             src/stats.py segment_lifts and reports/tables/ad_lift_by_*.csv.
+--             src/stats.py segment_lifts and reports/tables/ad_lift_by_*.csv, which
+--             carry diff_vs_rest_ac too.
 --           - Peak day / hour describe the user's habits, recorded after
 --             assignment, not a slot the media plan bought. A pattern here is a
 --             hypothesis for a pre-registered test that randomizes the delivery

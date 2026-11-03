@@ -21,6 +21,11 @@ Output
   keys) must agree exactly. Raises ReconciliationError (after writing the CSV) if any
   check fails, and before that if a SQL file has no reconciler or a reconciled file
   is missing.
+  The file is byte-identical from run to run. Each SQL file runs single-threaded:
+  with several threads DuckDB may add floating-point values (e.g. a window SUM over
+  segments) in a different order on each run, which moves the last digits of the
+  result. The CSV also stores sql_value to 12 significant digits and abs_diff to 3;
+  match is decided at full precision, before that rounding.
 
 Usage, from the repo root
   python -m src.sql_check                                  run every file + reconcile
@@ -59,6 +64,8 @@ RECON_CSV = C.TABLES_DIR / "sql_reconciliation.csv"
 TOL_EXACT = 0.0
 TOL_JSON = 5e-9 + 1e-12
 TOL_FULL = 1e-9
+# Significant digits written to reports/tables/sql_reconciliation.csv (match is decided before rounding)
+CSV_SIG_DIGITS = {"sql_value": 12, "abs_diff": 3}
 
 # Python result tables used for segment-level checks, with their segment column
 TABLE_KEYS = {
@@ -107,24 +114,32 @@ GATE_BANDS = (
     ("Rounds >= 30", "rounds_ge_30", (("retention_by_rounds_band", "rounds_ge_30"),
                                       ("negative_control", "reached_30"))),
 )
+# Edge-check bands (retention rows only, not in step 1): 'Rounds 15-29' split at 29 rounds, where a flawless
+# gate_30 player can already face the gate. (population, key in cookie.gate.retention_by_rounds_band)
+GATE_EDGE_BANDS = (("Rounds 15-28", "rounds_15_28"), ("Rounds 29", "rounds_29"))
 # The two bands that split every player once (decomposition), with their key in *_decomposition.detail
 GATE_PARTITION = (("Rounds < 30", "never_reached_30"), ("Rounds >= 30", "reached_30"))
-# Drill-down bands inside rounds < 30, with their inclusive round bounds (for the pandas share check)
-GATE_DRILL_DOWN = (("Rounds < 15", 0, 14), ("Rounds 15-29", 15, 29))
+# Drill-down and edge-check bands inside rounds < 30, with their inclusive round bounds (for the pandas share check)
+GATE_DRILL_DOWN = (("Rounds < 15", 0, 14), ("Rounds 15-29", 15, 29), ("Rounds 15-28", 15, 28), ("Rounds 29", 29, 29))
+# The band-gap difference row of sql/09 (step 2): the 15-29 band's D7 gap minus the < 15 band's
+GATE_GAP_DIFF = ("retention", "Rounds 15-29 minus Rounds < 15", "D7 gap difference")
 # Every row of sql/09_gate_integrity.sql in output order: (section, population, measure)
 GATE_ROWS = (
     *(("assignment", band, "assigned players") for band, _, _ in GATE_BANDS),
-    *(("retention", band, "D7") for band in ("All players", "Rounds < 15", "Rounds 15-29", "Rounds < 30")),
+    *(("retention", band, "D7") for band in ("All players", "Rounds < 15", "Rounds 15-29")),
+    GATE_GAP_DIFF,
+    *(("retention", band, "D7") for band in ("Rounds 15-28", "Rounds 29", "Rounds < 30")),
     ("retention", "Rounds < 30, net excess removed", "D7"),
     ("retention", "Rounds >= 30", "D7"),
-    *(("retention", band, "D1") for band, _, _ in GATE_BANDS),
+    *(("retention", band, "D1") for band in ("All players", "Rounds < 15", "Rounds 15-29", "Rounds 15-28", "Rounds 29",
+                                             "Rounds < 30", "Rounds >= 30")),
     ("best case for gate_40", "All players, extra installs removed", "D7"),
     ("play", "All players", "pre-gate rounds (capped at 29), mean"),
     ("play", "Rounds >= 30", "rounds, median"),
     ("play", "Rounds >= 30", "rounds, mean"),
     ("play", "Rounds >= 30", "share with 40+ rounds"),
-    ("re-test sizing", "All players", "D7 change to detect"),
-    ("re-test sizing", "Rounds >= 30", "D7 change to detect"),
+    *(("re-test sizing", band, f"D7 {direction} to detect") for band in ("All players", "Rounds >= 30")
+      for direction in ("drop", "rise")),
 )
 # A two-proportion row of sql/09 vs a src.stats.two_prop_test result in results.json:
 # (check, SQL column, results.json key, tolerance). The p-value is checked separately (from z_stat).
@@ -181,11 +196,12 @@ def ensure_raw_links() -> None:
 
 
 def run_sql_file(path: str | Path) -> pd.DataFrame:
-    """Run one SQL file in a fresh in-memory DuckDB, from the repo root, and return its final SELECT."""
+    """Run one SQL file in a fresh in-memory DuckDB, from the repo root, and return its final SELECT.
+    Single-threaded, so floating-point sums are added in the same order on every run (see Output)."""
     path = resolve_sql_path(path)
     query = path.read_text(encoding="utf-8")
     try:
-        with contextlib.chdir(C.ROOT), duckdb.connect() as con:
+        with contextlib.chdir(C.ROOT), duckdb.connect(config={"threads": 1}) as con:
             rel = con.sql(query)
             if rel is None:
                 raise ValueError("the file must end with a SELECT statement")
@@ -268,6 +284,21 @@ class _Checks:
 
     def frame(self) -> pd.DataFrame:
         return pd.DataFrame(self.rows)
+
+
+def _round_sig(x, digits: int):
+    """A finite non-zero float rounded to `digits` significant digits; any other value unchanged."""
+    if isinstance(x, float) and math.isfinite(x) and x != 0:
+        return float(f"{x:.{digits}g}")
+    return x
+
+
+def _csv_view(table: pd.DataFrame) -> pd.DataFrame:
+    """The reconciliation table as written to CSV: CSV_SIG_DIGITS applied to the numeric display columns."""
+    out = table.copy()
+    for col, digits in CSV_SIG_DIGITS.items():
+        out[col] = out[col].map(lambda x: _round_sig(x, digits))
+    return out
 
 
 def _identical_rows(sql: pd.DataFrame, py: pd.DataFrame, key: str) -> int:
@@ -419,7 +450,7 @@ def _srm(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
 def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     het, alpha = py["res"]["ad"]["heterogeneity"], py["res"]["ad"]["test"]["alpha"]
     count_cols = (("users_ad", "n_t"), ("users_psa", "n_c"), ("conversions_ad", "conv_t"), ("conversions_psa", "conv_c"))
-    contrast_cols = (("lift_rest", "lift_rest"), ("diff_vs_rest", "diff_vs_rest"),
+    contrast_cols = (("lift_rest", "lift_rest"), ("diff_vs_rest", "diff_vs_rest"), ("diff_vs_rest_ac", "diff_vs_rest_ac"),
                      ("diff_vs_rest_ci95_low", "diff_vs_rest_ci_low"), ("diff_vs_rest_ci95_high", "diff_vs_rest_ci_high"))
     for dim in HET_DIMS:
         table = f"ad_lift_by_{dim}"
@@ -435,9 +466,11 @@ def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
                sum(all(s.at[k, a] == p.at[k, b] for a, b in count_cols) for k in common), src, len(p))
         ck.add(f"{lbl}: segments with matching z statistic (lift != 0)", f,
                sum(abs(s.at[k, "z_stat"] - p.at[k, "z"]) <= TOL_FULL for k in common), src, len(p))
-        ck.add(f"{lbl}: segments with matching contrast vs the other segments (lift_rest, raw diff, CI)", f,
+        ck.add(f"{lbl}: segments with matching contrast vs the other segments (lift_rest, raw diff, "
+               "Agresti-Caffo diff, CI)", f,
                sum(all(abs(s.at[k, a] - p.at[k, b]) <= TOL_FULL for a, b in contrast_cols) for k in common), src, len(p))
         # the point estimate is raw; the CI is Agresti-Caffo, so it is centred on the adjusted difference
+        # (diff_vs_rest_ac, checked against the table's own column below and against the CI's midpoint here)
         ck.add(f"{lbl}: segments whose CI is centred on the Agresti-Caffo difference (SQL diff_vs_rest_ac)", f,
                sum(abs(s.at[k, "diff_vs_rest_ac"] - (p.at[k, "diff_vs_rest_ci_low"] + p.at[k, "diff_vs_rest_ci_high"]) / 2)
                    <= TOL_FULL for k in common), src + " (diff_vs_rest_ci_low + diff_vs_rest_ci_high) / 2", len(p))
@@ -479,6 +512,8 @@ def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
             ck.add(f"{lbl} = {k}: absolute lift", f, s["abs_lift"].get(k), src, p.at[k, "abs_lift"], TOL_FULL)
             ck.add(f"{lbl} = {k}: lift minus the other segments' lift (raw)", f, s["diff_vs_rest"].get(k), src,
                    p.at[k, "diff_vs_rest"], TOL_FULL)
+            ck.add(f"{lbl} = {k}: the same on Agresti-Caffo adjusted proportions (CI centre, diff_vs_rest_ac)", f,
+                   s["diff_vs_rest_ac"].get(k), src, p.at[k, "diff_vs_rest_ac"], TOL_FULL)
 
     # daypart: the Night cell behind the daypart interaction test
     night = sql[(sql["dimension"] == "daypart") & (sql["segment"] == C.DAYPART_ORDER[0])].iloc[0]
@@ -677,14 +712,23 @@ def _gate_integrity(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
            row("assignment", "Rounds < 15", "assigned players")["difference"], j + "excess_players_with_lt_15_rounds",
            gate["excess_players_with_lt_15_rounds"])
 
-    # Step 2 - D7 and D1 by band and version, analysis population
+    # Step 2 - D7 and D1 by band and version, analysis population (edge-check bands included)
+    retention_bands = (*GATE_BANDS,
+                       *((band, None, (("retention_by_rounds_band", key),)) for band, key in GATE_EDGE_BANDS))
     for measure, metric in (("D7", "retention_7"), ("D1", "retention_1")):
-        for band, _, paths in GATE_BANDS:
+        for band, _, paths in retention_bands:
             r = row("retention", band, measure)
             for i, path in enumerate(paths):
                 where = ".".join((*path, metric))
                 lbl = f"gate {measure} {band}" + (f" (again, as {'.'.join(path)})" if i else "")
                 _gate_two_prop(ck, f, lbl, r, _dig(gate, where), j + where + ".")
+    # do the 15-29 and < 15 bands' D7 gaps differ? (difference of gaps, unpooled SE; p from the SQL z)
+    gd, r_gd = gate["d7_band_gap_difference_15_29_vs_lt_15"], row(*GATE_GAP_DIFF)
+    jg = j + "d7_band_gap_difference_15_29_vs_lt_15."
+    for check, value, key in (("difference of the two bands' D7 gaps", r_gd["difference"], "diff"),
+                              ("standard error (unpooled)", r_gd["std_error"], "se"),
+                              ("p-value (two-sided, from the SQL z)", _p1(r_gd["z_stat"]), "p_value")):
+        ck.add(f"gate D7 band-gap difference (15-29 minus < 15): {check}", f, value, jg + key, gd[key], TOL_JSON)
     for band, lo, hi in GATE_DRILL_DOWN:   # share of each arm in the drill-down bands (not in results.json)
         sub = c[c["sum_gamerounds"].between(lo, hi)]
         for arm in ("gate_40", "gate_30"):
@@ -780,9 +824,11 @@ def _gate_integrity(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     _gate_two_prop(ck, f, f"{lbl}: share with 40+ rounds", row("play", "Rounds >= 30", "share with 40+ rounds"),
                    rr["share_past_40_rounds"], jr + "share_past_40_rounds.")
 
-    # Step 6 - re-test sizing at the change fixed in config.yaml (Cohen's h closed form in SQL)
+    # Step 6 - re-test sizing at the change fixed in config.yaml (Cohen's h closed form in SQL): sized for a
+    # drop (the headline), and for a rise of the same size (results.json *_if_rise)
     rs, js, lbl = gate["retest_sizing"], j + "retest_sizing.", "gate re-test sizing"
-    inst, rch = (row("re-test sizing", band, "D7 change to detect") for band in ("All players", "Rounds >= 30"))
+    inst, rch = (row("re-test sizing", band, "D7 drop to detect") for band in ("All players", "Rounds >= 30"))
+    inst_up, rch_up = (row("re-test sizing", band, "D7 rise to detect") for band in ("All players", "Rounds >= 30"))
     reach7 = row("retention", "Rounds >= 30", "D7")
     for check, value, key, tol in (
         ("smallest D7 change per install (SQL params)", -inst["difference"], "smallest_d7_change_per_install", TOL_JSON),
@@ -799,8 +845,33 @@ def _gate_integrity(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ("players with 30+ rounds needed (50/50)", rch["players_needed_5050"], "reachers_needed_5050", TOL_EXACT),
         ("installs needed for the primary analysis among them (50/50)", rch["installs_needed_5050"],
          "installs_needed_reacher_analysis_5050", TOL_EXACT),
+        # a rise of the same size
+        ("rise: smallest D7 change per install (SQL params)", inst_up["difference"], "smallest_d7_change_per_install",
+         TOL_JSON),
+        ("rise: baseline D7, all installs (gate_30)", inst_up["value_gate_30"], "baseline_d7_install", TOL_JSON),
+        ("rise: installs needed, analysed over all installs (50/50)", inst_up["installs_needed_5050"],
+         "installs_needed_install_level_5050_if_rise", TOL_EXACT),
+        ("rise: players needed, analysed over all installs (50/50)", inst_up["players_needed_5050"],
+         "installs_needed_install_level_5050_if_rise", TOL_EXACT),
+        ("rise: the same change among players with 30+ rounds", rch_up["difference"], "equivalent_change_among_reachers",
+         TOL_JSON),
+        ("rise: baseline D7 among players with 30+ rounds (gate_30)", rch_up["value_gate_30"], "baseline_d7_reachers",
+         TOL_JSON),
+        ("rise: players with 30+ rounds needed (50/50)", rch_up["players_needed_5050"], "reachers_needed_5050_if_rise",
+         TOL_EXACT),
+        ("rise: installs needed for the primary analysis among them (50/50)", rch_up["installs_needed_5050"],
+         "installs_needed_reacher_analysis_5050_if_rise", TOL_EXACT),
     ):
         ck.add(f"{lbl}: {check}", f, value, js + key, rs[key], tol)
+    # the share with 30+ rounds that turns players into installs, shown on both 'Rounds >= 30' sizing rows: the
+    # average of the arms is used; gate_30's own share is the cohort figure to re-check before a re-test
+    for direction, r_ in (("drop", rch), ("rise", rch_up)):
+        for check, value, key in (
+            ("average share of players with 30+ rounds", (r_["share_of_arm_gate_40"] + r_["share_of_arm_gate_30"]) / 2,
+             "share_reached_30"),
+            ("share of gate_30 players with 30+ rounds", r_["share_of_arm_gate_30"], "share_reached_30_gate_30"),
+        ):
+            ck.add(f"{lbl} ({direction} row): {check}", f, value, js + key, rs[key], TOL_JSON)
     ck.add(f"{lbl}: smallest D7 change (SQL params) matches config.yaml", f, -inst["difference"],
            "results.json config.gate_smallest_d7_change", py["res"]["config"]["gate_smallest_d7_change"], TOL_JSON)
 
@@ -905,7 +976,7 @@ def run_and_reconcile(verbose: bool = True) -> pd.DataFrame:
     seconds = time.time() - t0
     table = reconcile(outputs, load_python_side())
     C.TABLES_DIR.mkdir(parents=True, exist_ok=True)
-    table.to_csv(RECON_CSV, index=False)
+    _csv_view(table).to_csv(RECON_CSV, index=False)
 
     n, n_ok = len(table), int(table["match"].sum())
     out_path = _shown(RECON_CSV)

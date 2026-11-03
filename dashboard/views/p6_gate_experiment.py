@@ -7,7 +7,8 @@ The page follows the analysis chain, in this order:
      pre-gate play (the same imbalance seen as a distribution);
   3. how much of the D7 gap the gate could explain: the negative control, the decomposition
      and the best case for gate_40;
-  4. the guardrails, read where the gate can act (30+ rounds): Day 1 and rounds played;
+  4. the guardrails among players who could meet the gate (30+ rounds): Day 1 (quoted per install, because the
+     30+ band is a diluted read for Day 1) and rounds played;
   5. a live sensitivity panel on the naive comparison;
   6. the re-test sizing (a change fixed in advance, never the observed effect) and
   7. the decision (R5).
@@ -32,6 +33,7 @@ SRM = G["srm"]                        # raw assignment counts
 SBS = G["srm_by_stratum"]             # net excess by rounds band (descriptive: no status labels)
 NC = G["negative_control"]
 BAND = G["retention_by_rounds_band"]
+BGD = G["d7_band_gap_difference_15_29_vs_lt_15"]   # D7 gap at 15–29 minus the gap at < 15 rounds
 DEC = G["d7_decomposition"]
 DEC1 = G["d1_decomposition"]
 BEST = G["best_case_for_gate_40"]
@@ -177,6 +179,11 @@ ncr = NC["never_reached_30"]["retention_7"]
 ncx = NC["never_reached_30_excess_removed"]
 band7 = {k: v["retention_7"] for k, v in BAND.items()}
 band1 = {k: v["retention_1"] for k, v in BAND.items()}
+b1529_7, b30_7 = band7["rounds_15_29"], band7["rounds_ge_30"]
+b1528, b29 = band7["rounds_15_28"], band7["rounds_29"]   # at 29 rounds a perfect gate_30 player can face the gate
+# "similar gap", never "the same": the two bands match to two decimals by coincidence, so both CIs are shown
+similar_gap = (f"15–29 rounds: {pp(b1529_7['abs_lift'])}, 95% CI {ci(b1529_7['abs_ci_low'], b1529_7['abs_ci_high'])}; "
+               f"30+ rounds: {pp(b30_7['abs_lift'])}, 95% CI {ci(b30_7['abs_ci_low'], b30_7['abs_ci_high'])}")
 dec_ci = DEC["install_level_effect_ci_if_only_reachers"]
 dec1_ci = DEC1["install_level_effect_ci_if_only_reachers"]
 per10k = [x * 10_000 for x in (DEC["within_reached_30"], *dec_ci)]
@@ -208,7 +215,8 @@ kpi(k2, "D7 difference (naive)", pp(g7["abs_lift"]), f"95% CI {ci(g7['abs_ci_low
          "carries the assignment imbalance (section 2), so quoting it as the gate's effect would overstate it.")
 kpi(k3, "D1 retention, gate_40", fmt_pct(g1["rate_t"]), f"gate_30: {fmt_pct(g1['rate_c'])}")
 kpi(k4, "D1 difference (naive)", pp(g1["abs_lift"]), f"95% CI {ci(g1['abs_ci_low'], g1['abs_ci_high'])}",
-    help=f"gate_40 − gate_30, {p_eq(g1['p_value'])}. D1 is a guardrail; section 4 reads it where the gate can act.")
+    help=f"gate_40 − gate_30, {p_eq(g1['p_value'])}. D1 is a guardrail; section 4 reads the part the gate could "
+         "explain.")
 show(F.fig_gate_rates(G, "D1 and D7 retention by gate version (%, 95% CI)"), key="p6_rates")
 takeaway(CAT["gate_rates"])
 show(F.fig_gate_bootstrap(BOOT, G, "Bootstrap distribution of gate_40 − gate_30 retention (pp)"), key="p6_boot")
@@ -246,8 +254,8 @@ st.markdown("\n".join(table))
 takeaway(f"The net excess sits with players who never met a gate: a net excess of {lt15['net_excess_t']:,} among "
          f"players with < 15 rounds ({p_eq(lt15['p_value'])}), {sgn(b1529['net_excess_t'], 0)} at 15–29 "
          f"({p_eq(b1529['p_value'])}) and {sgn(ge30['net_excess_t'], 0)} at 30+ ({p_eq(ge30['p_value'])}). Play below "
-         "level 30 happens before either gate, so the gate cannot be the reason: gate_40 received extra low-engagement "
-         "installs, an assignment or logging problem.")
+         "level 30 happens before either gate, so the gate cannot be the reason: most likely assignment or logging "
+         "added low-engagement installs to gate_40 (or dropped them from gate_30); Engineering confirms the cause.")
 dropped = ", ".join(f"{o['version']}, {o['sum_gamerounds']:,} rounds" for o in DROPPED)
 st.caption(f"gate_40 has ≈{extra_round:,} extra installs ({raw_excess:,} in the raw log, {extra:,} after the "
            f"one-outlier drop: {dropped}). The < 30 row is the sum of the < 15 and 15–29 rows.")
@@ -276,7 +284,7 @@ kpi(c2, f"Without the net {ncx['excess_removed']:,}", pp(ncx["retention_7"]["abs
 kpi(c3, "Gate could explain", pp(DEC["within_reached_30"]), f"per install · CI {ci(*dec_ci)}",
     help="The part of the naive D7 gap that sits with players who could have reached level 30 (30+ rounds), in pp per "
          "install, with its 95% CI. Not an estimate of the gate's effect: players with 15–29 rounds, who never met a "
-         "gate, show the same gap.")
+         f"gate, show a similar gap ({similar_gap}).")
 kpi(c4, "Best case for gate_40", pp(BEST["d7_diff_if_excess_removed"]), f"95% CI {ci(*BEST['ci'])}",
     help=f"The naive D7 gap if all ≈{extra_round:,} extra gate_40 installs were junk installs that never came back "
          f"(removed from gate_40 with no Day-7 players): the reading most favourable to gate_40. "
@@ -285,7 +293,7 @@ kpi(c4, "Best case for gate_40", pp(BEST["d7_diff_if_excess_removed"]), f"95% CI
 nc_rows = pd.DataFrame([   # the catalog's gate_negative_control rows (default view = catalog chart)
     {"label": "All players (naive result)", "role": "main", **g7},
     {"label": "Never met a gate: < 30 rounds", "role": "control", **ncr},
-    {"label": "of which < 15 rounds (extra installs sit here)", "role": "control", **band7["rounds_lt_15"]},
+    {"label": "of which < 15 rounds (net excess sits here)", "role": "control", **band7["rounds_lt_15"]},
     {"label": "of which 15–29 rounds (balanced in number)", "role": "control", **band7["rounds_15_29"]},
     {"label": "Could meet the gate: 30+ rounds", "role": "other", **band7["rounds_ge_30"]},
 ])
@@ -294,11 +302,12 @@ show(F.fig_effect_by_stratum(nc_rows, "D7 retention difference by rounds played:
                              height=380), key="p6_negative_control")
 takeaway(CAT["gate_negative_control"])
 st.markdown(
-    f"**Reading the negative control.** Borderline on its own ({p_eq(ncr['p_value'])}), it carries weight only because "
-    "it points the same way as the excess of low-engagement installs. The gap sits with players who played 15–29 "
-    f"rounds ({pp(band7['rounds_15_29']['abs_lift'])}, {p_eq(band7['rounds_15_29']['p_value'])}, balanced in number), "
-    f"not with the extra < 15-round installs ({pp(band7['rounds_lt_15']['abs_lift'])}, "
-    f"{p_eq(band7['rounds_lt_15']['p_value'])}). Removing the net {ncx['excess_removed']:,} extra < 15-round installs "
+    f"**Reading the negative control.** Borderline on its own ({p_eq(ncr['p_value'])}); it carries weight only because "
+    "the sample-ratio warning independently says the arms are not comparable. Such gap as there is comes from the "
+    f"15–29 band ({pp(band7['rounds_15_29']['abs_lift'])}, {p_eq(band7['rounds_15_29']['p_value'])}, balanced in "
+    f"number) rather than the < 15 band where the net excess sits ({pp(band7['rounds_lt_15']['abs_lift'])}, "
+    f"{p_eq(band7['rounds_lt_15']['p_value'])}), though the two bands' gaps are not distinguishable from each other "
+    f"({p_eq(BGD['p_value'])}). Removing the net {ncx['excess_removed']:,} extra < 15-round installs "
     f"moves it only to {pp(ncx['retention_7']['abs_lift'])} ({p_eq(ncx['retention_7']['p_value'])}). So the extra "
     "installs explain the sample-ratio warning and the player-mix part of the gap, but not this gap.")
 
@@ -310,11 +319,10 @@ parts = pd.DataFrame([   # the catalog's gate_decomposition bars, labels on two 
      "ci_low": dec_ci[0], "ci_high": dec_ci[1]},
 ])
 dec_fig = F.fig_gap_decomposition(parts, "Where the naive D7 gap comes from (pp of installs)")
-# phones: the builder reserves a fixed 330 px for the labels, which leaves no plot area at 390 px. Let the two-line
-# labels size the margin, and give the value labels left of the bars a little more room.
+# phones: the builder now sizes the margin from the labels (automargin), but at 390 px its x-range still puts the
+# "−0.82 pp" and "−0.32 pp" value labels on top of the y labels; widen the left end a little more (checked at 1400
+# and 390 px).
 x0, x1 = dec_fig.layout.xaxis.range
-dec_fig.update_layout(margin=dict(l=12))
-dec_fig.update_yaxes(automargin=True)
 dec_fig.update_xaxes(range=[x0 * 1.25, x1])
 show(dec_fig, key="p6_decomposition")
 takeaway(CAT["gate_decomposition"])
@@ -322,9 +330,9 @@ st.markdown(
     f"**Reading the decomposition.** About {round(not_gate_share * 10) * 10:.0f}% of the naive gap (player mix "
     f"{pp(DEC['composition'])}, players who never met a gate {pp(DEC['within_never_reached_30'])}) sits where the gate "
     f"cannot act. The remaining {pp(DEC['within_reached_30'])} per install is the part the gate could explain, not an "
-    "estimate of the gate's effect: players with 15–29 rounds, who never met a gate, show the same D7 gap "
-    f"({pp(band7['rounds_15_29']['abs_lift'])}) as players with 30+ rounds ({pp(band7['rounds_ge_30']['abs_lift'])}), "
-    "so even this part may not be the gate. Per 10,000 installs it is "
+    "estimate of the gate's effect: players with 15–29 rounds, who never met a gate, show a similar D7 gap to "
+    f"players with 30+ rounds ({similar_gap}), so even this part may not be the gate. Per 10,000 "
+    "installs it is "
     f"≈{players(per10k[0])} Day-7 players (95% CI {players(per10k[1])} to {players(per10k[2])}).")
 st.markdown(
     f"**Best case for gate_40.** Even if every one of the ≈{extra_round:,} extra installs never returned, the D7 gap "
@@ -332,17 +340,20 @@ st.markdown(
     "Its interval includes 0.")
 
 # ---------------------------------------------------------------- 4. guardrails
-st.subheader("4 · Guardrails: Day 1 and rounds played, where the gate can act")
+st.subheader("4 · Guardrails: Day 1 and rounds played, among players who could meet the gate")
 d1b, d7b = band1["rounds_ge_30"], band7["rounds_ge_30"]
+D1_DILUTED = ("the gate can change Day 1 only for players who reached level 30 on the install day, and the data "
+              "cannot single them out")
 w1, w2, w3, w4 = st.columns(4)
-kpi(w1, "D1 · 30+ rounds", pp(d1b["abs_lift"]), f"95% CI {ci(d1b['abs_ci_low'], d1b['abs_ci_high'])}",
-    help="D1 difference (gate_40 − gate_30) among players with 30+ rounds (could have reached level 30), where the "
-         f"gate can act; {p_eq(d1b['p_value'])}. The naive all-player D1 ({pp(g1['abs_lift'])}) carries the player-mix "
-         "imbalance.")
-kpi(w2, "D1 · gate could explain", pp(DEC1["within_reached_30"]), f"per install · CI {ci(*dec1_ci)}",
-    help=f"The D1 decomposition, like D7's: naive {pp(DEC1['naive_diff'])} = player mix {pp(DEC1['composition'])} + "
-         f"players who never met a gate {pp(DEC1['within_never_reached_30'])} + players who could meet the gate "
-         f"{pp(DEC1['within_reached_30'])} per install.")
+kpi(w1, "D1 · gate could explain", pp(DEC1["within_reached_30"]), f"per install · CI {ci(*dec1_ci)}",
+    help="The D1 number to quote: the part of the naive D1 gap the gate could explain, in pp per install, with its 95% "
+         f"CI. The D1 decomposition, like D7's: naive {pp(DEC1['naive_diff'])} = player mix "
+         f"{pp(DEC1['composition'])} + players who never met a gate {pp(DEC1['within_never_reached_30'])} + players "
+         f"who could meet the gate {pp(DEC1['within_reached_30'])} per install.")
+kpi(w2, "D1 · 30+ rounds", pp(d1b["abs_lift"]), f"95% CI {ci(d1b['abs_ci_low'], d1b['abs_ci_high'])}",
+    help="D1 difference (gate_40 − gate_30) among players with 30+ rounds (could have reached level 30); "
+         f"{p_eq(d1b['p_value'])}. A diluted read for Day 1: {D1_DILUTED}, so the per-install figure is the D1 number "
+         f"to quote. The naive all-player D1 ({pp(g1['abs_lift'])}) carries the player-mix imbalance.")
 kpi(w3, "Median rounds · 30+ rounds", f"{RR['median_t']:.0f} vs {RR['median_c']:.0f}",
     f"gate_40 vs gate_30 · {p_eq(RR['mannwhitney_p'])}",
     help=f"Rounds in the first 14 days among players with 30+ rounds ({RR['n_t']:,} gate_40, {RR['n_c']:,} gate_30); "
@@ -354,9 +365,10 @@ kpi(w4, "Past 40 rounds · 30+ rounds", pp(sp40["abs_lift"], 1),
     help="Difference (gate_40 − gate_30) in the share of players with 30+ rounds who went past 40 rounds: "
          f"{sp40['rate_t']:.1%} vs {sp40['rate_c']:.1%}, with the 95% CI of the difference.")
 takeaway(f"Day 1: the naive {pp(g1['abs_lift'])} (95% CI {ci(g1['abs_ci_low'], g1['abs_ci_high'])}) carries the same "
-         f"imbalance (player mix {pp(DEC1['composition'])}). Among players with 30+ rounds (could have reached level "
-         f"30) D1 is {pp(d1b['abs_lift'])} (95% CI {ci(d1b['abs_ci_low'], d1b['abs_ci_high'])}): no sign of a D1 "
-         f"effect where the gate can act ({pp(DEC1['within_reached_30'])} per install, 95% CI {ci(*dec1_ci)}).")
+         f"imbalance (player mix {pp(DEC1['composition'])}). The part the gate could explain is "
+         f"{pp(DEC1['within_reached_30'])} per install (95% CI {ci(*dec1_ci)}): no sign of a D1 effect. The band of "
+         f"players with 30+ rounds (could have reached level 30; {pp(d1b['abs_lift'])}) is a diluted read for Day 1: "
+         f"{D1_DILUTED}.")
 takeaway(f"Rounds played: the all-player mean difference ({sgn(RD['mean_diff'])} rounds, 95% CI "
          f"{sgn(RD['mean_diff_boot_ci'][0], 1)} to {sgn(RD['mean_diff_boot_ci'][1], 1)}) carries the same imbalance, "
          "so it is not a clean guardrail. Among players with 30+ rounds, gate_40 players play a little more: median "
@@ -400,11 +412,12 @@ fig = F.fig_lift_forest(forest_rows(cur, "this check"), "row",
                         sig_col="excludes_0", sig_label="CI excludes 0", nonsig_label="CI includes 0",
                         xtitle="gate_40 − gate_30 retention (pp)")
 # gate wording for the hover: the arms are gate_40 / gate_30 and the p-values are unadjusted (the builder's default
-# hover speaks of "treatment / control" and "adjusted p"); 2 significant digits, so a p-value never shows as 0
+# hover speaks of "treatment / control" and "adjusted p"). The builder passes the p-value as text ('= 0.0016',
+# '< 0.0001'), so it is inserted as is: a number format on it would print NaN, and it never shows as 0.
 fig.update_traces(hovertemplate="<b>%{y}</b><br>Difference %{x:.2f} pp (CI %{customdata[7]:.2f} to "
                                 "%{customdata[8]:.2f})<br>gate_40 %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
                                 "<br>gate_30 %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
-                                "<br>p = %{customdata[4]:.2g}<extra></extra>")
+                                "<br>p %{customdata[4]}<extra></extra>")
 show(fig, key="p6_sensitivity")
 st.caption(f"Headline = all {G['players'][C_ARM] + G['players'][T_ARM]:,} players, {conf(ALPHA0)} CI (from "
            "results.json). 'This check' = the filters and α chosen above, recomputed live. Both are the naive "
@@ -423,7 +436,7 @@ d7_text = ci_verdict(c7, "D7", level)
 d1_text = ci_verdict(c1_, "D1", level)
 if c1_["abs_ci_high"] < 0 and not is_headline:
     d1_text += ("; this is one of several cuts of an unbalanced comparison, so it is not evidence of a D1 effect "
-                "(section 4 reads D1 where the gate can act)")
+                "(section 4 reads the part of D1 the gate could explain)")
 takeaway(f"{scope}: D7 {pp(c7['abs_lift'])} ({level} CI {ci(c7['abs_ci_low'], c7['abs_ci_high'])} pp) and D1 "
          f"{pp(c1_['abs_lift'])} ({level} CI {ci(c1_['abs_ci_low'], c1_['abs_ci_high'])} pp). {d7_text}; "
          f"{d1_text}. None of these cuts fixes the imbalance, so even a CI that excludes 0 here is not a certified "
@@ -444,10 +457,16 @@ kpi(r2, "Installs needed · 30+ analysis", f"≈{need_reach / 1e3:,.0f}K",
     help=f"Primary analysis among players who reach level 30 (30+ rounds; who gets there is decided before the gate), "
          f"pre-registered: {RT['reachers_needed_5050']:,} such players at 50/50, {need_reach:,} installs at the "
          f"{RT['share_reached_30']:.1%} of installs who get there. For them, {sesoi * 100:.1f} pp per install is "
-         f"{RT['equivalent_change_among_reachers'] * 100:.2f} pp on a {RT['baseline_d7_reachers']:.1%} D7 base.")
+         f"{RT['equivalent_change_among_reachers'] * 100:.2f} pp on a {RT['baseline_d7_reachers']:.1%} D7 base. Sized "
+         f"to detect a {sesoi * 100:.1f} pp drop; a rise of the same size needs slightly more: "
+         f"≈{RT['installs_needed_reacher_analysis_5050_if_rise'] / 1e3:,.1f}K installs "
+         f"({RT['reachers_needed_5050_if_rise']:,} such players). The reacher figure uses this cohort's "
+         f"{RT['share_reached_30']:.1%} reaching level 30; re-check with the new cohort's share before launch.")
+rise_all = RT["installs_needed_install_level_5050_if_rise"] / need_all - 1
 kpi(r3, "Installs needed · all installs", f"≈{need_all / 1e3:,.0f}K", "install-level analysis · 50/50",
     help=f"{need_all:,} installs at 50/50 for {POWER0:.0%} power at α = {ALPHA0:.2f} if the same change is analysed "
-         "over all installs.")
+         f"over all installs. Sized to detect a {sesoi * 100:.1f} pp drop; a rise of the same size needs "
+         f"≈{rise_all:.0%} more (≈{RT['installs_needed_install_level_5050_if_rise'] / 1e3:,.0f}K).")
 kpi(r4, "MDE as run (design)", f"D7 {g7['mde']['mde_abs'] * 100:.2f} pp",
     f"D1 {g1['mde']['mde_abs'] * 100:.2f} pp · {POWER0:.0%} power",
     help=f"The smallest true change this test's design detects with {POWER0:.0%} power at α = {ALPHA0:.2f}. It "
@@ -473,8 +492,8 @@ with st.container(border=True):
         f"{RR['median_t']:.0f} vs {RR['median_c']:.0f} rounds). If the Game PM values that, a clean re-test is the "
         "way to decide.\n"
         f"- **First · Eng + Analytics:** fix assignment and logging (gate_40 received ≈{extra_round:,} extra "
-        f"installs, a net {lt15['net_excess_t']:,} of them with < 15 rounds): bucketing code, how each version was "
-        "rolled out, install and crash logs by version.\n"
+        f"installs, with a net excess of {lt15['net_excess_t']:,} among players with < 15 rounds): bucketing code, "
+        "how each version was rolled out, install and crash logs by version.\n"
         f"- **Re-test only if the gate position matters commercially:** pre-register a {sesoi * 100:.1f} pp D7 change "
         "per install as the smallest change worth acting on (agree with the Game PM); "
         f"≈{need_reach / 1e3:,.0f}K installs at 50/50 with the primary analysis among players who reach level 30 "
@@ -501,23 +520,27 @@ informative; its size is not certified. The rounds bands were chosen after seein
 describe where the excess sits; they are not tests.
 
 **What "30+ rounds" means.** Rounds are counted over the first 14 days and every level takes at least one round, so a
-player with fewer than 30 rounds cannot have reached level 30, where the first gate sits in either version. "30+
-rounds" therefore means "could have reached level 30"; the data has no level field.
+player with fewer than 30 rounds cannot have got past level 30, where the first gate sits in either version (at
+exactly 29 rounds, a gate_30 player who won every round can already face the gate). "30+ rounds" therefore means
+"could have reached level 30"; the data has no level field.
 
 **Why splitting by rounds is allowed here, when splitting the ad test by ads seen is not.** Ads can change how long a
 user stays from the first impression, so the number of ads seen can itself be an effect of the treatment. Below level
 30 both game versions are identical, so whether a player ever plays 30 rounds cannot depend on the gate: it behaves like
-a trait fixed before the gate. It is an approximation (a gate_30 player who won each of 29 rounds would already face the
-gate), and that pushes in the opposite direction to the observed gaps. That is why the 30+ part of the gap is called
-"the part the gate could explain", not an estimate of the gate's effect.
+a trait fixed before the gate. It is an approximation: a gate_30 player who won each of 29 rounds would already face the
+gate. Such players are few (no pile-up at 29 rounds: {b29['n_t']:,} gate_40 vs {b29['n_c']:,} gate_30 players), and
+without the 29-round players the 15–28 band still shows {pp(b1528['abs_lift'])} (95% CI
+{ci(b1528['abs_ci_low'], b1528['abs_ci_high'])}). So the rounds bands are close to, not exactly, gate-free. This is one
+reason the 30+ part of the gap is called "the part the gate could explain", not an estimate of the gate's effect.
 
 **Engagement curve gap.** For each N, the gap between the versions in the share of players who played at least N
 rounds. In the grey zone (before any gate) the versions are identical by design, so the curve should hug 0; it sits
 below 0 because gate_40 has extra low-round installs. It is the same imbalance, not a second piece of evidence.
 
 **Negative control.** Players with fewer than 30 rounds never met a gate, so their D7 should not differ by version. A
-gap there points at the imbalance or at chance, not at the gate. Here it is borderline ({p_eq(ncr['p_value'])}) and sits
-with the 15–29 band, not with the extra < 15-round installs.
+gap there points at the imbalance or at chance, not at the gate. Here it is borderline ({p_eq(ncr['p_value'])}). Such
+gap as there is comes from the 15–29 band rather than the < 15 band where the net excess sits, though the two bands'
+gaps are not distinguishable from each other ({p_eq(BGD['p_value'])}).
 
 **Decomposition.** The bars add up exactly to the naive D7 gap. The grey parts sit where the gate cannot act (a
 different player mix; players who never met a gate); the blue part, with its 95% interval, is what the gate could
@@ -527,7 +550,9 @@ explain.
 returned. Removing them still leaves {pp(BEST['d7_diff_if_excess_removed'])}, with an interval that includes 0.
 
 **Guardrails.** The case for a later gate is that players would play more before hitting it. All-player guardrails
-carry the same imbalance as D7, so they are read among players with 30+ rounds, where the gate can act.
+carry the same imbalance as D7, so they are read among players with 30+ rounds, who could meet the gate. For Day 1
+that band is a diluted read ({D1_DILUTED}), so the D1 number is the part the gate could explain per install
+({pp(DEC1['within_reached_30'])}, 95% CI {ci(*dec1_ci)}).
 
 **Sensitivity panel.** It re-runs the naive comparison under other reasonable choices: a stricter α, leaving out
 players who never played, dropping heavy players. Do not hunt for the filter that gives the answer you like: that is
@@ -545,7 +570,8 @@ you care about, never with an estimate.
   (about {abs(DEC['within_reached_30']) * 100:.2f} pp per install) may be zero.
 - "{p_eq(SRM['p_value'])} on the sample-ratio check is fine." For a sample-ratio check that is a warning sign.
 - "The naive D1 {pp(g1['abs_lift'])} shows a Day-1 problem." It carries the same imbalance (player mix
-  {pp(DEC1['composition'])}); among players with 30+ rounds D1 is {pp(d1b['abs_lift'])}.
+  {pp(DEC1['composition'])}); the part the gate could explain is {pp(DEC1['within_reached_30'])} per install (95% CI
+  {ci(*dec1_ci)}).
 - "gate_40 players play more, so gate_40 is better." Players with 30+ rounds play a little more under gate_40, but their
   D7 is not higher: no sign of a retention benefit.
 - "Players who reach round 30 retain much better, so push everyone to round 30." Rounds are counted over 14 days and

@@ -102,6 +102,11 @@ def verb(n: int, singular: str, plural: str) -> str:
     return singular if n == 1 else plural
 
 
+def count_out_of(n: int, total: int, cfg: dict) -> str:
+    """'8 hours (out of 24)': the count leads, so a bare 'N of 24' (withdrawn wording) never renders."""
+    return f"{n} {verb(n, cfg['prose'][:-1], cfg['prose'])} (out of {total})"
+
+
 def sgn(x: float, nd: int = 2) -> str:
     """Signed number with a true minus sign for prose: +0.95 / −0.74."""
     return f"{x:+.{nd}f}".replace("-", "−")
@@ -121,16 +126,6 @@ def hour_ranges(hours) -> str:
 
 def kpi(col, label: str, value: str, note: str | None = None, help: str | None = None) -> None:
     col.metric(label, value, delta=note, delta_color="off", delta_arrow="off", help=help)
-
-
-def hover_p_2sig(fig):
-    """Hover p-values with two significant digits. The forest builder formats them with .4f, which shows a tiny
-    adjusted p (Tuesday's lift, the exposure contrasts) as 0.0000; a no-op once the builder uses .2g."""
-    for tr in fig.data:
-        if tr.hovertemplate:
-            tr.hovertemplate = (tr.hovertemplate.replace("%{customdata[4]:.4f}", "%{customdata[4]:.2g}")
-                                .replace("%{customdata[6]:.4f}", "%{customdata[6]:.2g}"))
-    return fig
 
 
 # ------------------------------------------------------------------ what the interaction tests say
@@ -155,7 +150,7 @@ TOP_DAY_NOTE = (f"{top_day}'s PSA arm has {int(top_c['n_c']):,} users and {int(t
                 "is a low control rate" if TOP_DAY_LOW_CONTROL else "")
 TOP_DAY_LOW = f"part of {top_day}'s lift is a low PSA rate ({top_c['rate_c']:.2%})" if TOP_DAY_LOW_CONTROL else ""
 # dimension-specific caveats, used in the Step 1 table and in the live takeaways
-NIGHT_NOTE = (f"driven entirely by Night (0–5), where PSA has {night['conversions']} conversion among "
+NIGHT_NOTE = (f"driven by Night (0–5), where PSA has {night['conversions']} conversion among "
               f"{night['users']:,} users; excluding Night, {p_eq(hp['lrt_excluding_night']['p_value'])}")
 EXPOSURE_NOTE = ("exposure is recorded after assignment and tracks how active a user is: heavy users respond "
                  "differently, which does not show that more ads cause more lift")
@@ -267,7 +262,7 @@ k1, k2, k3, k4 = st.columns(4)
 kpi(k1, "Interaction p", p_text(lrt["p_value"]), f"LRT, χ² {lrt['lr_stat']:.1f} on {lrt['df']} df",
     help="Likelihood-ratio test of ad × segment: does the lift differ across segments at all? One test per "
          "dimension, so it is the number to quote before any single segment.")
-kpi(k2, "Differ from the rest", f"{n_diff}", f"of {n_seg} · {CORR_SHORT[method]}, α = {alpha:.2f}",
+kpi(k2, "Differ from the rest", f"{n_diff}", f"out of {n_seg} · {CORR_SHORT[method]}, α = {alpha:.2f}",
     help="Segment-vs-rest contrasts: is this segment's lift different from the lift in all other segments? "
          "This is the heterogeneity question.")
 kpi(k3, "Expected by chance", f"{expected_fp:.2g}", f"{n_seg} contrasts × {alpha:.2f}",
@@ -275,7 +270,7 @@ kpi(k3, "Expected by chance", f"{expected_fp:.2g}", f"{n_seg} contrasts × {alph
          f"{alpha:.2f} with no correction would flag about {expected_fp:.2g} by chance. Bonferroni and Holm keep "
          "the chance of even one false flag below α; Benjamini–Hochberg keeps the expected share of false flags "
          "below α.")
-kpi(k4, "Lift ≠ 0 (secondary)", f"{n_pos}", f"of {n_seg} · {CORR_SHORT[method]}, α = {alpha:.2f}",
+kpi(k4, "Lift ≠ 0 (secondary)", f"{n_pos}", f"out of {n_seg} · {CORR_SHORT[method]}, α = {alpha:.2f}",
     help="Per-segment test of ad vs PSA. Because the overall lift is real, this count mostly reflects how many "
          "users each segment has, not whether the ad works differently there.")
 
@@ -295,7 +290,7 @@ else:
     title = f"Ad lift by {d['title']} (pp, {conf(alpha)} CI; filled = lift ≠ 0, {CORR_SHORT[method]})"
     fig = F.fig_lift_forest(tab, dim, title, overall_lift=T["abs_lift"], seg_title=d["axis"],
                             sig_col="significant_adj", **labels)
-show(hover_p_2sig(fig), key="p5_forest")
+show(fig, key="p5_forest")
 
 reading = live_reading(dim, alpha)
 if question == "differs" and is_default:
@@ -305,7 +300,7 @@ elif question == "differs":
     if diff.empty:
         head = f"No {d['noun']} differs from the other {d['prose']} {corr_phrase} at α = {alpha:.2f}"
     else:
-        head = (f"{len(diff)} of {n_seg} {d['prose']} {verb(len(diff), 'differs', 'differ')} from the others "
+        head = (f"{count_out_of(len(diff), n_seg, d)} {verb(len(diff), 'differs', 'differ')} from the others "
                 f"{corr_phrase} at α = {alpha:.2f}")
         if len(diff) <= 3:
             head += ": " + ", ".join(f"{seg_name(dim, s)} ({sgn(x * 100)} pp vs the rest)"
@@ -313,10 +308,10 @@ elif question == "differs":
     takeaway(f"{head}. With no correction about {expected_fp:.2g} of {n_seg} contrasts would be flagged by chance if "
              f"none truly differed. Interaction test {p_eq(lrt['p_value'])}: {reading}.")
 else:
-    takeaway(f"{n_pos} of {n_seg} {d['prose']} {verb(n_pos, 'shows', 'show')} a lift ≠ 0 {corr_phrase} at "
+    takeaway(f"{count_out_of(n_pos, n_seg, d)} {verb(n_pos, 'shows', 'show')} a lift ≠ 0 {corr_phrase} at "
              f"α = {alpha:.2f}. Because the overall lift is real, these per-segment tests mostly measure sample size: "
              f"{d['a_noun']} without a significant lift is often just a small one, and a significant one need not "
-             f"differ from the rest. Whether {d['prose']} differ is the other view ({n_diff} of {n_seg} "
+             f"differ from the rest. Whether {d['prose']} differ is the other view ({n_diff} out of {n_seg} "
              f"{corr_phrase}).")
 
 small = tab[(tab["n_c"] < SMALL_CONTROL) | (tab["conv_c"] == 0)]
@@ -342,6 +337,7 @@ with st.expander(f"Segment table: all {n_seg} {d['prose']} ({CORR_SHORT[method]}
         "Lift": tab["abs_lift"] * 100,
         "Lift, rest": tab["lift_rest"] * 100,
         "Diff. vs rest": tab["diff_vs_rest"] * 100,
+        "CI centre (adjusted)": tab["diff_vs_rest_ac"] * 100,
         "CI low": tab["diff_vs_rest_ci_low"] * 100,
         "CI high": tab["diff_vs_rest_ci_high"] * 100,
         "Adj. p": tab["p_vs_rest_adj"],
@@ -355,11 +351,13 @@ with st.expander(f"Segment table: all {n_seg} {d['prose']} ({CORR_SHORT[method]}
                  column_config={"Ad users": st.column_config.NumberColumn(format="localized"),
                                 "PSA users": st.column_config.NumberColumn(format="localized"),
                                 "Lift": signed, "Lift, rest": signed, "Diff. vs rest": signed,
-                                "CI low": signed, "CI high": signed, "Adj. p": pcol, "Adj. p, lift ≠ 0": pcol})
+                                "CI centre (adjusted)": signed, "CI low": signed, "CI high": signed, "Adj. p": pcol,
+                                "Adj. p, lift ≠ 0": pcol})
     st.caption(f"Lift, Lift, rest and Diff. vs rest in pp. Diff. vs rest is the raw difference, Lift − Lift, rest: "
                f"this {d['noun']}'s lift minus the lift in all other {d['prose']}. Its {conf(alpha)} interval and "
                "'Adj. p' use Agresti–Caffo adjusted rates (+1 conversion and +1 non-conversion per group), so in "
-               "sparse cells the interval is not centred on the point. These contrasts are on the percentage-point "
+               "sparse cells the interval is not centred on the point; 'CI centre (adjusted)' shows its centre (pp). "
+               "These contrasts are on the percentage-point "
                "scale; the Step 1 interaction test is on the odds scale. 'Adj. p' and 'Differs' answer the "
                "heterogeneity question, the last two columns the lift ≠ 0 question. Adjusted p-values use the "
                f"selected correction across the {n_seg} {d['prose']}.")
@@ -391,9 +389,8 @@ e1, e2, e3, e4 = st.columns(4)
 kpi(e1, "Users with ≤ 20 ads", f"{con['share_users_le_20_ads']:.0%}",
     f"lift {sgn(le20['abs_lift'] * 100)} pp: none measurable",
     help=f"Share of all users who saw 20 ads or fewer. Pooled, their lift is {sgn(le20['abs_lift'] * 100)} pp "
-         f"(95% CI {sgn(le20['abs_ci_low'] * 100)} to {sgn(le20['abs_ci_high'] * 100)}); a lift above "
-         f"{le20['mde_abs'] * 100:.2f} pp ({le20['mde_rel']:+.0%} on their {le20['rate_c']:.2%} PSA base) would have "
-         "shown with 80% power.")
+         f"(95% CI {sgn(le20['abs_ci_low'] * 100)} to {sgn(le20['abs_ci_high'] * 100)}) on a "
+         f"{le20['rate_c']:.2%} PSA base: no lift we could measure.")
 kpi(e2, "21–35 ads: inconclusive", f"{sgn(b2135['abs_lift'] * 100)} pp",
     f"95% CI {sgn(b2135['abs_ci_low'] * 100)} to {sgn(b2135['abs_ci_high'] * 100)}",
     help=f"The next {b2135['share_ad_users']:.0%} of ad users. The interval is too wide to say whether they respond.")

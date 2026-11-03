@@ -234,7 +234,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     dp = S.segment_lifts(cells, "daypart", "ad", "psa", alpha=C.ALPHA, method="holm", order=C.DAYPART_ORDER)
     hp = het["daypart"]
     nc_ = hp["night_counts"]["psa"]
-    tk = (f"Grouped into dayparts the interaction test gives {fmt_p(hp['lrt']['p_value'])}, driven entirely by Night (0–5), "
+    tk = (f"Grouped into dayparts the interaction test gives {fmt_p(hp['lrt']['p_value'])}, driven by Night (0–5), "
           f"where the control arm has {nc_['conversions']} conversion among {nc_['users']:,} users; without it, "
           f"{fmt_p(hp['lrt_excluding_night']['p_value'])}. No reliable time-of-day pattern.")
     out["het_daypart"] = Fig("het_daypart", "heterogeneity", F.fig_lift_forest(
@@ -247,7 +247,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     con = het["exposure_bucket"]["concentration"]
     le20 = con["le_20_ads_pooled"]
     tk = (f"The {pct(con['share_users_le_20_ads'], 0)} of users who saw ≤ 20 ads show no lift we could measure "
-          f"({sgn(le20['abs_lift']*100)} pp; a lift above {num(le20['mde_abs']*100)} pp would have shown). At 36–200 ads the "
+          f"({sgn(le20['abs_lift']*100)} pp, 95% CI {num(le20['abs_ci_low']*100)} to {sgn(le20['abs_ci_high']*100)}). At 36–200 ads the "
           f"lift is {e.loc['36-50', 'abs_lift']*100:.1f}–{e.loc['101-200', 'abs_lift']*100:.1f} pp: these buckets hold "
           f"{pct(con['share_ad_users_36_200'], 0)} of ad users and {pct(con['share_incremental_conversions_36_200'], 0)} of the "
           f"bucket-by-bucket incremental conversions. No usable estimate past 200 ads (CI {num(con['top_bucket_ci_pp'][0], 1)} "
@@ -283,18 +283,20 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     rows = pd.DataFrame([
         {"label": "All players (naive result)", "role": "main", **g7},
         {"label": "Never met a gate: < 30 rounds", "role": "control", **nc["never_reached_30"]["retention_7"]},
-        {"label": "of which < 15 rounds (extra installs sit here)", "role": "control", **band["rounds_lt_15"]["retention_7"]},
+        {"label": "of which < 15 rounds (net excess sits here)", "role": "control", **band["rounds_lt_15"]["retention_7"]},
         {"label": "of which 15–29 rounds (balanced in number)", "role": "control", **band["rounds_15_29"]["retention_7"]},
         {"label": "Could meet the gate: 30+ rounds", "role": "other", **band["rounds_ge_30"]["retention_7"]},
     ])
     ncr = nc["never_reached_30"]["retention_7"]
     b15, b1529, b30 = (band[k]["retention_7"] for k in ("rounds_lt_15", "rounds_15_29", "rounds_ge_30"))
     hi_txt = "just below 0" if -0.005 < ncr["abs_ci_high"] * 100 < 0 else num(ncr["abs_ci_high"] * 100)
+    bgd = g["d7_band_gap_difference_15_29_vs_lt_15"]
     tk = (f"Players with < 30 rounds met no gate in either version, yet gate_40 shows {sgn(ncr['abs_lift']*100)} pp D7 "
-          f"(CI {num(ncr['abs_ci_low']*100)} to {hi_txt}, {fmt_p(ncr['p_value'])}: borderline on its own). The gap sits with "
-          f"players who played 15–29 rounds ({sgn(b1529['abs_lift']*100)} pp, {fmt_p(b1529['p_value'])}), not with the extra "
-          f"< 15-round installs ({sgn(b15['abs_lift']*100)} pp), and players who could meet the gate show the same "
-          f"{sgn(b30['abs_lift']*100)} pp. So even their gap may not be the gate.")
+          f"(CI {num(ncr['abs_ci_low']*100)} to {hi_txt}, {fmt_p(ncr['p_value'])}: borderline on its own). Such gap as there "
+          f"is comes from players with 15–29 rounds ({sgn(b1529['abs_lift']*100)} pp, {fmt_p(b1529['p_value'])}) rather than "
+          f"the < 15-round band where the net excess sits ({sgn(b15['abs_lift']*100)} pp), though the two bands' gaps are not "
+          f"distinguishable ({fmt_p(bgd['p_value'])}). Players who could meet the gate show a similar gap "
+          f"({sgn(b30['abs_lift']*100)} pp), so even their gap may not be the gate.")
     out["gate_negative_control"] = Fig("gate_negative_control", "gate", F.fig_effect_by_stratum(
         rows, "D7 retention difference by rounds played: a negative-control check (pp, 95% CI)", tk, height=380), tk)
 
@@ -325,7 +327,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
           f"{sgn(dec['within_never_reached_30']*100)} pp from players who never met a gate; neither can be the gate "
           f"(imbalance or chance). The rest, {sgn(dec['within_reached_30']*100)} pp per install (95% CI {num(ci[0]*100)} to "
           f"{sgn(ci[1]*100)}), is the part the gate could explain, not an estimate of its effect: players with 15–29 "
-          f"rounds, who never met a gate, show the same gap as those who could. No sign of a retention benefit.")
+          f"rounds, who never met a gate, show a similar gap to those who could. No sign of a retention benefit.")
     out["gate_decomposition"] = Fig("gate_decomposition", "gate", F.fig_gap_decomposition(
         parts, "Where the naive D7 gap comes from (pp of installs)", tk), tk)
 

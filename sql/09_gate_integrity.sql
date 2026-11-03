@@ -8,9 +8,11 @@
 --           versions, and rounds >= levels):
 --             1. Assignment by rounds band (raw counts): where gate_40's net
 --                excess of installs sits.
---             2. D7 and D1 by band and version. Players with < 30 rounds never
---                met a gate, so with sound assignment their retention should not
---                differ (negative control).
+--             2. D7 and D1 by band and version. A player with < 30 rounds cannot
+--                have got past level 30, so (up to the 29-round edge case in
+--                Notes) these players never met a gate, and with sound assignment
+--                their retention should not differ (negative control). Includes a
+--                test of whether the 15-29 and < 15 bands' D7 gaps differ.
 --             3. Decomposition of the naive D7 and D1 gaps into player mix, the
 --                gap among players who never met a gate, and the part the gate
 --                could explain (players with 30+ rounds).
@@ -18,38 +20,49 @@
 --                extra installs never returned.
 --             5. Play: pre-gate rounds, and rounds among players with 30+ rounds
 --                (the engagement guardrail where the gate can act).
---             6. Re-test sizing at a D7 change fixed in advance.
+--             6. Re-test sizing at a D7 change fixed in advance, for a drop and
+--                for a rise of that size.
 -- Input   : data/raw/cookie_cats.csv - one row per player. Step 1 counts every
 --           assigned player (as 03_srm_check.sql); steps 2-6 use the analysis
 --           population (outlier excluded, as 05_stg_cookie_cats.sql and 07).
--- Output  : 23 rows - grain: (section, population, measure).
+-- Output  : 30 rows - grain: (section, population, measure).
 --             section          'assignment' (step 1) | 'retention' (steps 2-3) |
 --                              'best case for gate_40' (step 4) | 'play' (step 5) |
 --                              're-test sizing' (step 6)
---             population       'All players' | 'Rounds < 15' | 'Rounds 15-29' | 'Rounds < 30' |
---                              'Rounds >= 30' | 'Rounds < 30, net excess removed' |
+--             population       'All players' | 'Rounds < 15' | 'Rounds 15-29' | 'Rounds 15-28' |
+--                              'Rounds 29' | 'Rounds < 30' | 'Rounds >= 30' |
+--                              'Rounds 15-29 minus Rounds < 15' |
+--                              'Rounds < 30, net excess removed' |
 --                              'All players, extra installs removed'
---             measure          'assigned players' | 'D7' | 'D1' |
+--             measure          'assigned players' | 'D7' | 'D1' | 'D7 gap difference' |
 --                              'pre-gate rounds (capped at 29), mean' | 'rounds, median' |
---                              'rounds, mean' | 'share with 40+ rounds' | 'D7 change to detect'
+--                              'rounds, mean' | 'share with 40+ rounds' |
+--                              'D7 drop to detect' | 'D7 rise to detect'
 --             reading          how to read the row
 --             n_gate_40, n_gate_30          players per arm (step 1: assigned players, raw file)
 --             k_gate_40, k_gate_30          players with the outcome (back on day 7 / day 1, or
 --                                           40+ rounds); NULL when the measure is not a share
 --             value_gate_40, value_gate_30  the measure per arm: k / n for shares, the median or
 --                                           mean for rounds, n for 'assigned players'. Step 6:
---                                           gate_30's D7 (baseline) and the baseline minus the change
+--                                           gate_30's D7 (baseline) and the baseline after the
+--                                           change (minus for a drop, plus for a rise)
 --             difference                    value_gate_40 - value_gate_30 (shares: proportion,
---                                           x100 = pp). Step 1: gate_40's net excess of players
+--                                           x100 = pp). Step 1: gate_40's net excess of players.
+--                                           'D7 gap difference': the 15-29 band's D7 difference
+--                                           minus the < 15 band's
+--             std_error                     'D7 gap difference' only: standard error of difference,
+--                                           from the two bands' unpooled variances
 --             z_stat                        shares: pooled two-proportion z statistic. Step 1:
 --                                           (n_gate_40 - n_gate_30) / SQRT(n_gate_40 + n_gate_30),
---                                           whose square is the 50/50 SRM chi-square
+--                                           whose square is the 50/50 SRM chi-square.
+--                                           'D7 gap difference': difference / std_error
 --             ci95_low, ci95_high           shares: 95% Newcombe (hybrid score) CI for difference,
 --                                           the interval in results.json
 --           Step 3 - decomposition, on the 'retention' rows ('Rounds < 30' and
 --           'Rounds >= 30' split every player exactly once; the 'All players' row
 --           holds their sums):
---             share_of_arm_gate_40, _gate_30  players in the band / players in the arm
+--             share_of_arm_gate_40, _gate_30  players in the band / players in the arm (also on
+--                                           the 'Rounds >= 30' sizing rows of step 6)
 --             within_term                   average share x difference: the band's part of the
 --                                           gap with the player mix held equal
 --             within_ci95_low, _high        average share x the CI (the share is treated as fixed)
@@ -66,29 +79,47 @@
 -- Notes   : - Why rounds can define bands here: rounds are counted after
 --             assignment, but below level 30 both versions are identical and
 --             rounds >= levels, so whether a player ever plays 30 rounds cannot
---             depend on the gate; it behaves like a pre-treatment trait. (Total ads
---             in the ad experiment cannot be used this way: ads can change how long
---             a user stays.) 'Rounds >= 30' means "could have reached level 30":
---             the file has no level field.
---           - The bands are an approximation near the line: a gate_30 player who
---             meets the gate after a flawless 29 rounds and stops stays below 30
---             rounds. That pushes in the opposite direction to the observed gaps,
---             and it is why the 'Rounds >= 30' within term is called "the part the
---             gate could explain", never an estimate of the gate's effect.
+--             depend on the gate (up to the edge case in the next note); it
+--             behaves like a pre-treatment trait. (Total ads in the ad experiment
+--             cannot be used this way: ads can change how long a user stays.)
+--             'Rounds >= 30' means "could have reached level 30": the file has no
+--             level field.
+--           - The bands are close to, not exactly, gate-free. A player with < 30
+--             rounds cannot have got past level 30, but at exactly 29 rounds a
+--             flawless gate_30 player can already face the gate, and one who stops
+--             there stays below 30 rounds. Such players are few: there is no
+--             pile-up at 29 rounds ('Rounds 29': 311 vs 302 players), and without
+--             them the 'Rounds 15-28' rows still show a D7 gap (-0.68 pp, 95% CI
+--             -1.64 to +0.28). This approximation is one reason the 'Rounds >= 30'
+--             within term is called "the part the gate could explain", never an
+--             estimate of the gate's effect.
 --           - Step 1: the bands were chosen after seeing the overall SRM result,
 --             to localize it, and they are nested (All > rounds < 30 > rounds < 15).
 --             Their p-values are descriptive, so these rows carry no SRM status
 --             label. A net excess is a difference in counts, not a set of
 --             identified players.
---           - Step 2: 'Rounds < 15' and 'Rounds 15-29' split 'Rounds < 30'.
---             'Rounds < 30, net excess removed' drops gate_40's net excess of
---             < 15-round players (step 1) and assumes none of them came back.
+--           - Step 2: 'Rounds < 15' and 'Rounds 15-29' split 'Rounds < 30', and the
+--             edge-check bands 'Rounds 15-28' and 'Rounds 29' split 'Rounds 15-29'
+--             (they are not part of step 1). 'Rounds < 30, net excess removed'
+--             drops gate_40's net excess of < 15-round players (step 1) and assumes
+--             none of them came back. 'Rounds 15-29 minus Rounds < 15' tests whether
+--             the two bands' D7 gaps differ (the bands share no player, so their
+--             unpooled variances add). Such gap as there is comes from the 15-29
+--             band (-0.87 pp, p = 0.071, balanced in number) rather than the < 15
+--             band where the net excess sits (-0.09 pp, p = 0.53), though the two
+--             bands' gaps are not distinguishable from each other (p = 0.12).
 --           - Step 3: for each of the two partition bands, within = average share
 --             x rate gap and composition = share gap x average rate. This symmetric
 --             form leaves no residual, so the parts add up to the naive gap exactly.
 --             Player mix and the never-met-a-gate part sit where the gate cannot
 --             act. Read the 'Rounds >= 30' within term next to the 'Rounds 15-29'
---             rows: those players never met a gate either.
+--             rows: those players never met a gate either (up to the 29-round edge
+--             case), yet show a similar D7 gap (15-29: -0.87 pp, 95% CI -1.82 to
+--             +0.07; 30+: -0.87 pp, 95% CI -1.94 to +0.20; equal to two decimals by
+--             coincidence), so even this part may not be the gate. For D1, quote the
+--             per-install within term: the gate can change Day 1 only for players
+--             who reached level 30 on the install day, which the data cannot single
+--             out, so the 'Rounds >= 30' D1 gap is diluted.
 --           - Step 4: the reading most favourable to gate_40 (every extra install
 --             a junk install that never came back). Extra installs here = gate_40
 --             minus gate_30 players in the analysis population: one more than in
@@ -101,8 +132,16 @@
 --             effect. smallest_d7_change (params) mirrors config.yaml
 --             gate_smallest_d7_change_pp, a per-install placeholder to agree with the
 --             Game PM. Among players with 30+ rounds the same per-install change is
---             change / average share. Both rows are sized for a drop, as
---             src/analysis.py does. Closed form on Cohen's h: per arm
+--             change / average share. The headline rows are sized to detect a
+--             0.5 pp drop, as src/analysis.py does; a rise of the same size needs
+--             slightly more (below a 50% baseline the same change upwards is a
+--             smaller Cohen's h): about 2% more analysed over all installs
+--             (195,344 vs 191,453 installs) and under 1% more for the analysis
+--             among players with 30+ rounds (42,217 vs 41,933 such players;
+--             114,439 vs 113,669 installs). Those installs use this cohort's
+--             average share with 30+ rounds (36.9%; gate_30 alone: 37.3%,
+--             share_of_arm_* on the sizing rows): re-check it with the new cohort's
+--             share before launch. Closed form on Cohen's h: per arm
 --             n = 2 x ((z_0.975 + z_0.80) / h)^2, total = 2n rounded up. src/stats.py
 --             solves the exact two-sided power equation instead; the extra tail
 --             moves the total by less than one player here, so after rounding up
@@ -135,18 +174,22 @@ players AS (
 ),
 
 -- Rounds bands (inclusive bounds on whole rounds). band_role drives step 3: the two
--- 'partition' bands split every player exactly once.
+-- 'partition' bands split every player exactly once. The two 'edge check' bands split
+-- 'Rounds 15-29' at the 29-round edge (step 2 only; see Notes).
 bands (band_order, population, band_role, reading, min_rounds, max_rounds) AS (
     VALUES
-        (1, 'All players',  'total',      'every player',                                       0, 1000000000),
-        (2, 'Rounds < 15',  'drill-down', 'never met a gate; far below either gate',            0,         14),
-        (3, 'Rounds 15-29', 'drill-down', 'never met a gate',                                  15,         29),
-        (4, 'Rounds < 30',  'partition',  'never met a gate: the negative control',             0,         29),
-        (5, 'Rounds >= 30', 'partition',  'could have reached level 30: could meet the gate', 30, 1000000000)
+        (1, 'All players',  'total',      'every player',                                                       0, 1000000000),
+        (2, 'Rounds < 15',  'drill-down', 'never met a gate; far below either gate',                            0,         14),
+        (3, 'Rounds 15-29', 'drill-down', 'cannot have got past level 30: close to gate-free (see Rounds 29)', 15,         29),
+        (4, 'Rounds 15-28', 'edge check', 'never met a gate: Rounds 15-29 without the 29-round edge case',     15,         28),
+        (5, 'Rounds 29',    'edge check', 'edge case: a flawless gate_30 player can already face the gate',    29,         29),
+        (6, 'Rounds < 30',  'partition',  'cannot have got past level 30: the negative control',                0,         29),
+        (7, 'Rounds >= 30', 'partition',  'could have reached level 30: could meet the gate',                  30, 1000000000)
 ),
 
--- Range join: every player lands in 'All players', in one partition band and in one
--- drill-down band (or none, with 30+ rounds). Counts are never summed across bands.
+-- Range join: every player lands in 'All players', in one partition band, in one
+-- drill-down band (none with 30+ rounds) and, with 15-29 rounds, in one edge-check band.
+-- Counts are never summed across bands.
 band_counts AS (
     SELECT
         b.band_order,
@@ -200,11 +243,12 @@ play AS (
 
 -- Every two-proportion comparison of gate_40 vs gate_30 (steps 2, 4 and 5), one row each
 comparisons AS (
-    -- step 2: D7 and D1 by band
+    -- step 2: D7 and D1 by band. D7 rows sit at 10 x band_order, which leaves room for the
+    -- band-gap difference (35) and the excess-removed comparison (65); D1 rows follow.
     SELECT
         2                                                         AS section_order,
         'retention'                                               AS section,
-        CASE WHEN band_order = 5 THEN 6 ELSE band_order END       AS row_order,
+        10 * band_order                                           AS row_order,
         population,
         band_role,
         reading,
@@ -217,14 +261,14 @@ comparisons AS (
 
     UNION ALL
 
-    SELECT 2, 'retention', 6 + band_order, population, band_role, reading, 'D1',
+    SELECT 2, 'retention', 100 + band_order, population, band_role, reading, 'D1',
            players_gate_40, players_gate_30, d1_gate_40, d1_gate_30
     FROM band_counts
 
     UNION ALL
 
     -- step 2 sensitivity: the negative control without gate_40's net excess of < 15-round players
-    SELECT 2, 'retention', 5, 'Rounds < 30, net excess removed', 'sensitivity',
+    SELECT 2, 'retention', 65, 'Rounds < 30, net excess removed', 'sensitivity',
            'net excess of < 15-round gate_40 players removed, assumed never to return', 'D7',
            c.players_gate_40 - e.net_excess_lt_15, c.players_gate_30, c.d7_gate_40, c.d7_gate_30
     FROM band_counts AS c
@@ -295,6 +339,18 @@ comparison_stats AS (
     FROM wilson
 ),
 
+-- Step 2: do the 15-29 and < 15 bands' D7 gaps differ? The bands share no player, so the
+-- variance of the difference of their gaps is the sum of the four unpooled (Wald) variances.
+band_gap_difference AS (
+    SELECT
+        MAX(difference) FILTER (WHERE population = 'Rounds 15-29')
+            - MAX(difference) FILTER (WHERE population = 'Rounds < 15')        AS difference,
+        SQRT(SUM(rate_gate_40 * (1 - rate_gate_40) / n_gate_40
+               + rate_gate_30 * (1 - rate_gate_30) / n_gate_30))              AS std_error
+    FROM comparison_stats
+    WHERE measure = 'D7' AND population IN ('Rounds 15-29', 'Rounds < 15')
+),
+
 -- Arm sizes in the analysis population: denominators of each band's share of its arm
 arm_totals AS (
     SELECT
@@ -350,7 +406,9 @@ sizing_inputs AS (
         'analysed over all installs'                                  AS reading,
         r.rate_gate_30                                                AS baseline_rate,
         p.smallest_d7_change                                          AS change,
-        1.0::DOUBLE                                                   AS share_of_installs
+        1.0::DOUBLE                                                   AS share_of_installs,
+        NULL::DOUBLE                                                  AS share_of_arm_gate_40,
+        NULL::DOUBLE                                                  AS share_of_arm_gate_30
     FROM retention_rows AS r
     CROSS JOIN params AS p
     WHERE r.measure = 'D7' AND r.population = 'All players'
@@ -358,25 +416,39 @@ sizing_inputs AS (
     UNION ALL
 
     SELECT
-        2,
+        3,
         'Rounds >= 30',
         'primary analysis (pre-registered): players with 30+ rounds',
         r.rate_gate_30,
         p.smallest_d7_change / r.avg_share,   -- the same per-install change, concentrated on these players
-        r.avg_share
+        r.avg_share,                          -- this cohort's share with 30+ rounds: re-check before a re-test
+        r.share_of_arm_gate_40,
+        r.share_of_arm_gate_30
     FROM retention_rows AS r
     CROSS JOIN params AS p
     WHERE r.measure = 'D7' AND r.population = 'Rounds >= 30'
 ),
 
--- Cohen's h for a drop of that size: h = |2 asin(sqrt(p_c - change)) - 2 asin(sqrt(p_c))|
+-- Both directions: the headline drop, and a rise of the same size
+directions (direction_order, measure, direction) AS (
+    VALUES
+        (0, 'D7 drop to detect', -1),
+        (1, 'D7 rise to detect',  1)
+),
+
+-- Cohen's h for that change: h = |2 asin(sqrt(p_c + direction x change)) - 2 asin(sqrt(p_c))|
 sizing_effect AS (
     SELECT
         s.*,
-        ABS(2 * ASIN(SQRT(s.baseline_rate - s.change)) - 2 * ASIN(SQRT(s.baseline_rate))) AS cohens_h,
+        s.row_order + d.direction_order                               AS sizing_order,
+        d.measure,
+        d.direction * s.change                                        AS signed_change,
+        ABS(2 * ASIN(SQRT(s.baseline_rate + d.direction * s.change))
+            - 2 * ASIN(SQRT(s.baseline_rate)))                        AS cohens_h,
         p.z_crit_95,
         p.z_power_80
     FROM sizing_inputs AS s
+    CROSS JOIN directions AS d
     CROSS JOIN params AS p
 ),
 
@@ -389,7 +461,7 @@ sizing AS (
 ),
 
 all_rows AS (
-    -- step 1: assignment by band, raw counts (no status label: see Notes)
+    -- step 1: assignment by band, raw counts (no status label: see Notes; edge-check bands not shown)
     SELECT
         1                                                              AS section_order,
         band_order                                                     AS row_order,
@@ -406,6 +478,7 @@ all_rows AS (
         assigned_gate_40::DOUBLE                                       AS value_gate_40,
         assigned_gate_30::DOUBLE                                       AS value_gate_30,
         (assigned_gate_40 - assigned_gate_30)::DOUBLE                  AS difference,
+        NULL::DOUBLE                                                   AS std_error,
         (assigned_gate_40 - assigned_gate_30)
             / SQRT(assigned_gate_40 + assigned_gate_30)                AS z_stat,
         NULL::DOUBLE                                                   AS ci95_low,
@@ -419,6 +492,7 @@ all_rows AS (
         NULL::BIGINT                                                   AS players_needed_5050,
         NULL::BIGINT                                                   AS installs_needed_5050
     FROM band_counts
+    WHERE band_role <> 'edge check'
 
     UNION ALL
 
@@ -427,7 +501,7 @@ all_rows AS (
         section_order, row_order, section, population, measure,
         CASE WHEN band_role = 'total' THEN 'naive comparison, not certified' ELSE reading END,
         n_gate_40, n_gate_30, k_gate_40, k_gate_30,
-        rate_gate_40, rate_gate_30, difference, z_stat, ci95_low, ci95_high,
+        rate_gate_40, rate_gate_30, difference, NULL, z_stat, ci95_low, ci95_high,
         CASE WHEN band_role <> 'sensitivity' THEN share_of_arm_gate_40 END,
         CASE WHEN band_role <> 'sensitivity' THEN share_of_arm_gate_30 END,
         within_term, within_ci95_low, within_ci95_high, composition_term,
@@ -436,11 +510,21 @@ all_rows AS (
 
     UNION ALL
 
+    -- step 2: the band-gap difference (a difference of two gaps: no per-arm values)
+    SELECT 2, 35, 'retention', 'Rounds 15-29 minus Rounds < 15', 'D7 gap difference',
+           'do the two bands'' D7 gaps differ? unpooled SEs; the bands share no player',
+           NULL, NULL, NULL, NULL,
+           NULL, NULL, difference, std_error, difference / std_error, NULL, NULL,
+           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    FROM band_gap_difference
+
+    UNION ALL
+
     -- step 4: best case for gate_40; step 5: share with 40+ rounds
     SELECT
         section_order, row_order, section, population, measure, reading,
         n_gate_40, n_gate_30, k_gate_40, k_gate_30,
-        rate_gate_40, rate_gate_30, difference, z_stat, ci95_low, ci95_high,
+        rate_gate_40, rate_gate_30, difference, NULL, z_stat, ci95_low, ci95_high,
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
     FROM comparison_stats
     WHERE section <> 'retention'
@@ -452,7 +536,7 @@ all_rows AS (
            'play before the first gate: identical in both versions by design',
            players_gate_40, players_gate_30, NULL, NULL,
            pre_gate_mean_gate_40, pre_gate_mean_gate_30, pre_gate_mean_gate_40 - pre_gate_mean_gate_30,
-           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
     FROM play
 
     UNION ALL
@@ -460,7 +544,7 @@ all_rows AS (
     SELECT 5, 2, 'play', 'Rounds >= 30', 'rounds, median', 'Mann-Whitney test in src/analysis.py',
            reach_gate_40, reach_gate_30, NULL, NULL,
            reach_median_gate_40, reach_median_gate_30, reach_median_gate_40 - reach_median_gate_30,
-           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
     FROM play
 
     UNION ALL
@@ -468,16 +552,18 @@ all_rows AS (
     SELECT 5, 3, 'play', 'Rounds >= 30', 'rounds, mean', 'bootstrap CI in src/analysis.py',
            reach_gate_40, reach_gate_30, NULL, NULL,
            reach_mean_gate_40, reach_mean_gate_30, reach_mean_gate_40 - reach_mean_gate_30,
-           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
     FROM play
 
     UNION ALL
 
-    -- step 6: re-test sizing
-    SELECT 6, row_order, 're-test sizing', population, 'D7 change to detect', reading,
+    -- step 6: re-test sizing, for a drop and for a rise of the same size
+    SELECT 6, sizing_order, 're-test sizing', population, measure, reading,
            NULL, NULL, NULL, NULL,
-           baseline_rate - change, baseline_rate, -change,
-           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+           baseline_rate + signed_change, baseline_rate, signed_change,
+           NULL, NULL, NULL, NULL,
+           share_of_arm_gate_40, share_of_arm_gate_30,
+           NULL, NULL, NULL, NULL,
            players_needed_5050,
            CAST(CEIL(players_needed_5050 / share_of_installs) AS BIGINT)
     FROM sizing
@@ -495,6 +581,7 @@ SELECT
     value_gate_40,
     value_gate_30,
     difference,
+    std_error,
     z_stat,
     ci95_low,
     ci95_high,

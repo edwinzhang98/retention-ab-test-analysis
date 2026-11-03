@@ -12,7 +12,7 @@ import streamlit as st
 from streamlit.errors import StreamlitPageNotFoundError
 
 from common import (C, F, S, approx, ci_text, fmt_pct, how_to_read, load_cache, load_catalog_takeaways, load_results,
-                    num, p_text, page_header, sgn, sgn_pp, show, takeaway)
+                    p_text, page_header, sgn, sgn_pp, show, takeaway)
 
 res = load_results()
 dq = res["data_quality"]
@@ -192,8 +192,8 @@ with row1[1].container(border=True, height="stretch"):
     st.markdown(
         "Nobody varied the budget, so the test measures ads vs no ads at the current spend, not what extra spend "
         f"would buy. The lift lives in heavy users: the **{con['share_users_le_20_ads'] * 100:.0f}%** of users who saw "
-        f"≤ 20 ads show no lift we could measure ({sgn_pp(le20['abs_lift'])}; a lift above "
-        f"{num(le20['mde_abs'] * 100)} pp would have shown), while the "
+        f"≤ 20 ads show no lift we could measure ({sgn_pp(le20['abs_lift'])}, "
+        f"{ci_text(le20['abs_ci_low'], le20['abs_ci_high'], unit='')}), while the "
         f"**{con['share_ad_users_36_200'] * 100:.0f}%** of ad users who saw 36–200 ads hold "
         f"**{con['share_incremental_conversions_36_200'] * 100:.0f}%** of the bucket-by-bucket incremental "
         "conversions. Exposure tracks how active a user is, so this is not a frequency curve. At USD "
@@ -209,7 +209,7 @@ with row1[2].container(border=True, height="stretch"):
     st.badge("No: keep the schedule", color="gray")
     st.markdown(
         f"**Hour:** no evidence the lift differs (interaction {p_text(h_hour['lrt']['p_value'])}). "
-        f"**Daypart:** {p_text(h_dp['lrt']['p_value'])} comes entirely from Night (0–5), where the control arm has "
+        f"**Daypart:** {p_text(h_dp['lrt']['p_value'])} is driven by Night (0–5), where the control arm has "
         f"{night['conversions']} conversion among {night['users']:,} users; without it "
         f"{p_text(h_dp['lrt_excluding_night']['p_value'])}. "
         f"**Day:** modest evidence ({p_text(h_day['lrt']['p_value'])}; {h_day['lrt_p_bonferroni_3_dims']:.2g} "
@@ -247,8 +247,8 @@ with row2[1].container(border=True, height="stretch"):
     st.markdown(
         f"The naive comparison shows gate_40's D7 **{abs(dec['naive_diff']) * 100:.2f} pp lower** "
         f"({ci_text(g7['abs_ci_low'], g7['abs_ci_high'], signed=False)}), but the arms are unbalanced: a sample-ratio "
-        f"**WARNING** ({p_text(gsrm['p_value'])}). gate_40 received **≈{excess} extra installs**, a net excess of "
-        f"{net_lt15} among players with < 15 rounds. About {round(not_gate * 10) * 10:.0f}% of the naive gap sits "
+        f"**WARNING** ({p_text(gsrm['p_value'])}). gate_40 received **≈{excess} extra installs**, with a net excess "
+        f"of {net_lt15} among players with < 15 rounds. About {round(not_gate * 10) * 10:.0f}% of the naive gap sits "
         "where the gate cannot act; the part the gate could explain is "
         f"**{sgn_pp(gate_eff)} per install** ({ci_text(gate_ci[0], gate_ci[1], unit='')}), not an estimate of its "
         "effect, and possibly zero. No sign of a retention benefit. Keeping gate_30 is the status quo, so the "
@@ -330,8 +330,8 @@ precisely.
   change on a base rate of {fmt_pct(t['rate_c'])}.
 - "Statistically significant" means "unlikely to be zero", not "big" or "profitable".
 - The experiment shows the campaign worked at its *current* budget. It says nothing direct about a doubled budget.
-- Reading the naive {sgn_pp(dec['naive_diff'])} D7 gap as the effect of the gate. It is the gap between unbalanced
-  arms, and most of it sits where the gate cannot act.
+- Reading the naive {sgn_pp(dec['naive_diff'])} D7 gap as the effect of the gate. The groups were unbalanced, and
+  about {round(not_gate * 10) * 10:.0f}% of the gap sits where the gate cannot act.
 - Reading the retention numbers as the app's own. They come from the company's mobile game (Cookie Cats, 2017
   install cohort), a different product from the app the ads ran in: segment sizes will not transfer one-for-one,
   and the two datasets share no users.

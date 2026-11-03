@@ -236,6 +236,7 @@ def segment_lifts(cells: pd.DataFrame, by: str, t_label: str, c_label: str,
         rest_t, rest_c = groups[2][0] / groups[2][1], groups[3][0] / groups[3][1]
         d["lift_rest"] = rest_t - rest_c
         d["diff_vs_rest"] = float(res.abs_lift - (rest_t - rest_c))  # raw point estimate
+        d["diff_vs_rest_ac"] = float(diff_ac)  # centre of the Agresti-Caffo CI (what the test is about)
         d["diff_vs_rest_ci_low"] = float(diff_ac - zc * se)
         d["diff_vs_rest_ci_high"] = float(diff_ac + zc * se)
         d["p_vs_rest"] = float(2 * stats.norm.sf(abs(diff_ac / se)))

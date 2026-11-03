@@ -79,6 +79,20 @@ WITHDRAWN = {
     "post-hoc power": r"post-hoc\s+power|achieved\s+power|power\s+at\s+the\s+observed\s+effect\s+is\s+\d",
     "'0.0085' (cleaned-count SRM p)": r"0\.0085",
     "persona wording": r"not\s+our\s+app|standing\s+in\s+for",
+    # v3.1 wording table (rows a–n) and "by Day 7"
+    "'the same gap' for 15–29 vs 30+ (write: a similar gap)": r"\bsame\s+(?:[−-]?\d+\.\d+\s+pp\s+)?(?:D7\s+)?gap",
+    "'the gap sits with' 15–29 (write: such gap as there is)": r"\bgap\s+sits\s+with",
+    "negative control 'points the same way'": r"points\s+the\s+same\s+way",
+    "imbalance cause stated as fact": r"received\s+extra\s+low-engagement|something\s+added\s+low-engagement",
+    "'plausible gate effect'": r"plausible\s+gate\s+effect",
+    "'cannot have reached level 30' (write: got past)": r"cannot\s+have\s+reached\s+level\s+30",
+    "edge-case direction claim": r"opposite\s+direction",
+    "≤ 20 ads 'would have shown'": r"would\s+have\s+shown",
+    "'driven entirely by Night'": r"driven\s+entirely",
+    "'no hour effect'": r"\bno\s+hour\s+effect",
+    "gate gap 'is the assignment problem'": r"gate\s+gap\s+is\s+the\s+assignment|mostly\s+reflects\s+unbalanced",
+    "'extra low-engagement installs' / 'a net 762 of them'": r"extra\s+low-engagement\s+installs|net\s+\d[\d,]*\s+of\s+them",
+    "'by Day 7' (write: on Day 7)": r"\bby\s+Day\s+7\b",
 }
 CASE_SENSITIVE = {"status 'WARN'"}
 # page 6 compares versions under an SRM warning: no causal verbs at all
@@ -456,13 +470,16 @@ def test_p5_contrast_is_the_raw_difference_with_an_agresti_caffo_ci():
     at = run_page(P5)
     seg = at.dataframe[0].value.set_index("Day")                              # the segment table, Holm, α = 0.05
     assert np.allclose(seg["Diff. vs rest"], seg["Lift"] - seg["Lift, rest"])
-    for col, src in (("Diff. vs rest", "diff_vs_rest"), ("CI low", "diff_vs_rest_ci_low"),
-                     ("CI high", "diff_vs_rest_ci_high"), ("Adj. p", "p_vs_rest_adj")):
+    for col, src in (("Diff. vs rest", "diff_vs_rest"), ("CI centre (adjusted)", "diff_vs_rest_ac"),
+                     ("CI low", "diff_vs_rest_ci_low"), ("CI high", "diff_vs_rest_ci_high"),
+                     ("Adj. p", "p_vs_rest_adj")):
         scale = 1 if col == "Adj. p" else 100
         assert np.allclose(seg.loc[day.index, col].to_numpy(), day[src].to_numpy() * scale), col
+    # the adjusted centre is the middle of the Agresti–Caffo CI (the raw point need not be)
+    assert np.allclose(seg["CI centre (adjusted)"], (seg["CI low"] + seg["CI high"]) / 2)
     cap = [c.value for c in at.caption if "Diff. vs rest" in c.value][0]
     for phrase in ("raw difference", "Lift − Lift, rest", "Agresti–Caffo", "+1 conversion and +1 non-conversion",
-                   "not centred on the point", "odds scale"):
+                   "not centred on the point", "'CI centre (adjusted)'", "odds scale"):
         assert phrase in cap, phrase
     tue, thu = day.loc["Tuesday"], day.loc["Thursday"]
     text = page_text(at)
@@ -481,7 +498,9 @@ def test_p5_contrast_is_the_raw_difference_with_an_agresti_caffo_ci():
     rerun(at)
     dp = at.dataframe[0].value.set_index("Daypart")
     assert abs(dp.loc["Night (0-5)", "Diff. vs rest"] - night["diff_vs_rest"] * 100) < 1e-9   # +0.45
+    assert abs(dp.loc["Night (0-5)", "CI centre (adjusted)"] - night["diff_vs_rest_ac"] * 100) < 1e-9
     assert dp.loc["Night (0-5)", "Differs"] == "No"
+    assert "driven by Night (0–5)" in page_text(at)
 
 
 def test_p5_tuesday_caveat_zero_hours_and_canonical_r3():
@@ -579,6 +598,28 @@ def test_p5_question_toggle_switches_the_fill():
     assert any("mostly measure sample size" in t for t in takeaways(at))
 
 
+def test_p5_segment_counts_lead_with_the_count():
+    """Hours, lift question, no correction: '8 hours (out of 24) show …', never the withdrawn 'N of 24' literal
+    (also not across the card's value and note)."""
+    hour = HET["most_ads_hour"]
+    n_none = hour["lift_positive"]["none"]
+    at = run_page(P5)
+    at.selectbox(key="p5_dim").set_value("most_ads_hour")
+    at.selectbox(key="p5_corr").set_value("none")
+    at.radio(key="p5_question").set_value("lift")
+    rerun(at)
+    tk = [t for t in takeaways(at) if "a lift ≠ 0 with no correction" in t]
+    assert tk and tk[0].startswith(f"{n_none} hours (out of {hour['n_segments']}) show a lift ≠ 0"), tk
+    card = metric(at, "Lift ≠ 0 (secondary)")
+    assert card.value == str(n_none) and note(card).startswith(f"out of {hour['n_segments']} ·")
+    assert_no_withdrawn(at, "p5 hours, lift question, no correction")
+    at.selectbox(key="p5_dim").set_value("most_ads_day")
+    at.radio(key="p5_question").set_value("differs")
+    rerun(at)
+    n_day = HET["most_ads_day"]["differs_from_rest"]["none"]
+    assert any(t.startswith(f"{n_day} days (out of 7) differ from the others") for t in takeaways(at)), takeaways(at)
+
+
 def test_p5_every_dimension_renders_with_the_story_wording():
     at = run_page(P5)
     for dim, key in (("most_ads_hour", "het_hour"), ("daypart", "het_daypart"),
@@ -605,7 +646,10 @@ def test_p5_exposure_cards_use_the_v3_concentration():
     m = metric(at, "Users with ≤ 20 ads")
     assert m.value == f"{con['share_users_le_20_ads']:.0%}"
     assert norm(note(m)).startswith(f"lift {le20['abs_lift'] * 100:+.2f} pp")              # −0.02 pp
-    assert f"{le20['mde_abs'] * 100:.2f} pp ({le20['mde_rel']:+.0%}" in m.proto.help     # 0.18 pp (+35%
+    # v3.1 row j: the CI, not the MDE (0.18 pp stays in the design / power tables only)
+    assert (f"(95% CI {le20['abs_ci_low'] * 100:+.2f} to {le20['abs_ci_high'] * 100:+.2f})"   # −0.14 to +0.09
+            in norm(m.proto.help))
+    assert f"{le20['mde_abs'] * 100:.2f} pp" not in m.proto.help
     m = metric(at, "21–35 ads: inconclusive")
     assert norm(m.value) == pp(b2135["abs_lift"])
     assert ci_from_note(m) == (r2(b2135["abs_ci_low"]), r2(b2135["abs_ci_high"]))
@@ -666,6 +710,9 @@ def test_p6_srm_warning_on_raw_counts_and_descriptive_bands():
     text = page_text(at)
     assert "chosen after seeing the warning" in text and "descriptive" in text
     assert f"a net excess of {sbs['rounds_lt_15']['net_excess_t']:,} among players with < 15 rounds" in text
+    # v3.1 row d: the cause is the most likely reading, for Engineering to confirm, not a fact
+    assert ("most likely assignment or logging added low-engagement installs to gate_40 (or dropped them from "
+            "gate_30); Engineering confirms the cause") in text
     extra = GATE["best_case_for_gate_40"]["excess_players_gate_40"]
     assert (f"≈{round(extra, -1):,} extra installs ({GATE['excess_players_raw']:,} in the raw log, {extra:,} after "
             "the one-outlier drop") in text
@@ -703,9 +750,19 @@ def test_p6_what_the_gate_could_explain_matches_results():
                                  "gate_rates", "gate_bootstrap"])
     text = norm(page_text(at))
     b15, b1529, b30 = (band[k]["retention_7"] for k in ("rounds_lt_15", "rounds_15_29", "rounds_ge_30"))
+    bgd = GATE["d7_band_gap_difference_15_29_vs_lt_15"]
     assert f"moves it only to {pp(ncx['retention_7']['abs_lift'])}" in text
-    assert f"15–29 rounds ({pp(b1529['abs_lift'])}" in text and f"< 15-round installs ({pp(b15['abs_lift'])}" in text
-    assert f"same D7 gap ({pp(b1529['abs_lift'])}) as players with 30+ rounds ({pp(b30['abs_lift'])})" in text
+    # v3.1 rows b and c: where such gap as there is comes from, and why the borderline control carries weight
+    assert f"15–29 band ({pp(b1529['abs_lift'])}, p = {b1529['p_value']:.2g}, balanced in number)" in text  # 0.071
+    assert f"< 15 band where the net excess sits ({pp(b15['abs_lift'])}, p = {b15['p_value']:.2g})" in text
+    assert f"not distinguishable from each other (p = {bgd['p_value']:.2g})" in text                    # 0.12
+    assert "the sample-ratio warning independently says the arms are not comparable" in text
+    # v3.1 row a: a similar gap, both with CIs (they match to two decimals by coincidence)
+    ci_txt = lambda r: f"95% CI {r['abs_ci_low'] * 100:+.2f} to {r['abs_ci_high'] * 100:+.2f}"  # noqa: E731
+    assert (f"similar D7 gap to players with 30+ rounds (15–29 rounds: {pp(b1529['abs_lift'])}, {ci_txt(b1529)}; "
+            f"30+ rounds: {pp(b30['abs_lift'])}, {ci_txt(b30)})") in text
+    assert (f"show a similar gap (15–29 rounds: {pp(b1529['abs_lift'])}, {ci_txt(b1529)}; 30+ rounds: "
+            f"{pp(b30['abs_lift'])}, {ci_txt(b30)})") in norm(metric(at, "Gate could explain").proto.help)
     share = (dec["composition"] + dec["within_never_reached_30"]) / dec["naive_diff"]
     assert f"About {round(share * 10) * 10:.0f}% of the naive gap" in text                     # about 60%
     per = [x * 1e4 for x in (dec["within_reached_30"], *ci)]
@@ -739,9 +796,17 @@ def test_p6_guardrails_are_read_where_the_gate_can_act():
     at = run_page(P6)
     m = metric(at, "D1 · 30+ rounds")
     assert norm(m.value) == pp(d1b["abs_lift"]) and ci_from_note(m) == (r2(d1b["abs_ci_low"]), r2(d1b["abs_ci_high"]))
+    assert "diluted" in m.proto.help and "on the install day" in m.proto.help
     ci1 = dec1["install_level_effect_ci_if_only_reachers"]
     m = metric(at, "D1 · gate could explain")
     assert norm(m.value) == pp(dec1["within_reached_30"]) and ci_from_note(m) == (r2(ci1[0]), r2(ci1[1]))
+    # v3.1 row e: the per-install figure (+0.03 pp, CI −0.29 to +0.35) is the D1 number, so its card comes first
+    labels = [m.label for m in at.metric]
+    assert labels.index("D1 · gate could explain") < labels.index("D1 · 30+ rounds"), labels
+    d1_tk = norm([t for t in takeaways(at) if t.startswith("Day 1:")][0])
+    assert (f"{pp(dec1['within_reached_30'])} per install (95% CI {ci1[0] * 100:+.2f} to {ci1[1] * 100:+.2f}): "
+            "no sign of a D1 effect") in d1_tk
+    assert "diluted read for Day 1" in d1_tk and "D1 effect where the gate can act" not in d1_tk
     assert metric(at, "Median rounds · 30+ rounds").value == f"{rr['median_t']:.0f} vs {rr['median_c']:.0f}"   # 75/72
     sp = rr["share_past_40_rounds"]
     m = metric(at, "Past 40 rounds · 30+ rounds")
@@ -769,6 +834,18 @@ def test_p6_retest_sizing_is_fixed_in_advance():
     assert m.value == f"D7 {g7['mde']['mde_abs'] * 100:.2f} pp" and f"D1 {g1['mde']['mde_abs'] * 100:.2f} pp" in note(m)
     tk = [t for t in takeaways(at) if t.startswith("Sized at a change fixed in advance")][0]
     assert "never at the observed effect" in tk and "daily 50/50 group-size check" in tk
+    # v3.1 row i: sized for a drop (a rise needs slightly more); the reacher size rests on this cohort's share
+    sesoi = f"{rt['smallest_d7_change_per_install'] * 100:.1f} pp drop"
+    reach = metric(at, "Installs needed · 30+").proto.help
+    assert f"Sized to detect a {sesoi}" in reach
+    assert f"≈{rt['installs_needed_reacher_analysis_5050_if_rise'] / 1e3:,.1f}K installs" in reach          # ≈114.4K
+    assert f"({rt['reachers_needed_5050_if_rise']:,} such players)" in reach                              # 42,217
+    assert (f"this cohort's {rt['share_reached_30']:.1%} reaching level 30; re-check with the new cohort's share "
+            "before launch") in reach                                                                     # 36.9%
+    rise = rt["installs_needed_install_level_5050_if_rise"] / rt["installs_needed_install_level_5050"] - 1
+    allh = metric(at, "Installs needed · all").proto.help
+    assert f"Sized to detect a {sesoi}" in allh
+    assert f"≈{rise:.0%} more (≈{rt['installs_needed_install_level_5050_if_rise'] / 1e3:,.0f}K)" in allh   # ≈2%, ≈195K
 
 
 def test_p6_decision_is_canonical_r5():
@@ -778,8 +855,8 @@ def test_p6_decision_is_canonical_r5():
     at = run_page(P6)
     box = [md.value for md in at.markdown if md.value.startswith("**Keep the first gate at level 30")][0]
     for phrase in ("don't ship gate_40", "not certified", "no sign of a retention benefit",
-                   f"≈{extra:,} extra installs, a net {sbs['rounds_lt_15']['net_excess_t']:,} of them with "
-                   "< 15 rounds",
+                   f"≈{extra:,} extra installs, with a net excess of {sbs['rounds_lt_15']['net_excess_t']:,} "
+                   "among players with < 15 rounds",
                    f"≈{rt['installs_needed_reacher_analysis_5050'] / 1e3:,.0f}K installs at 50/50",
                    f"≈{rt['reachers_needed_5050'] / 1e3:,.0f}K of them",
                    f"≈{rt['installs_needed_install_level_5050'] / 1e3:,.0f}K if analysed over all installs",
@@ -787,6 +864,20 @@ def test_p6_decision_is_canonical_r5():
                    f"median {rr['median_t']:.0f} vs {rr['median_c']:.0f} rounds", "a clean re-test",
                    "daily 50/50 group-size check", "would overstate the effect"):
         assert phrase in box, phrase
+
+
+def test_p6_rounds_bands_are_close_to_not_exactly_gate_free():
+    """v3.1 rows g and h: < 30 rounds 'cannot have got past level 30'; the 29-round edge case is sized (no pile-up,
+    the 15–28 band), with no claim about its direction."""
+    band = GATE["retention_by_rounds_band"]
+    b29, b1528 = band["rounds_29"]["retention_7"], band["rounds_15_28"]["retention_7"]
+    at = run_page(P6)
+    text = norm(page_text(at))
+    assert "cannot have got past level 30" in text and "can already face the gate" in text
+    assert f"no pile-up at 29 rounds: {b29['n_t']:,} gate_40 vs {b29['n_c']:,} gate_30 players" in text      # 311 / 302
+    assert (f"15–28 band still shows {pp(b1528['abs_lift'])} (95% CI {b1528['abs_ci_low'] * 100:+.2f} to "
+            f"{b1528['abs_ci_high'] * 100:+.2f})") in text                                                 # −0.68
+    assert "close to, not exactly, gate-free" in text
 
 
 def test_p6_no_causal_wording_and_no_withdrawn_labels():
@@ -825,6 +916,9 @@ def test_p6_rounds_cap_and_alpha_recompute():
     for tr in forest["data"]:                       # gate labels, unadjusted p, never 0.0000, no NaN contrast line
         ht = tr["hovertemplate"]
         assert "gate_40" in ht and "adjusted" not in ht and "vs other segments" not in ht and ":.4f}" not in ht
+        # the builder passes p as text ('= 0.0016', '< 0.0001'): inserted as is, a number format would print NaN
+        assert "p %{customdata[4]}" in ht and "%{customdata[4]:" not in ht, ht
+        assert all(str(row[4]).startswith(("= ", "< ", "> ")) for row in decode(tr["customdata"])), tr["customdata"]
 
 
 def test_p6_d1_statements_follow_the_ci():

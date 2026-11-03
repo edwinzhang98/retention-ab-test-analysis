@@ -25,7 +25,7 @@
 - **Q4 / Q5:** a D7 drop with a CI excluding 0 means "don't ship". A failed SRM means the readout can't be certified, and assignment must be investigated before any re-run.
 
 ## Outcome notes (added after the analysis; the rules above are kept as written beforehand)
-- **Q2(b)** could not be answered with this data. Ads seen is recorded after assignment and tracks how active a user is, so it shows *where* the lift sits (heavy users), not whether it saturates (readout, R2).
+- **Q2(b)** could not be answered with this data. Ads seen is recorded after assignment and tracks how active a user is, so it shows *where* the lift sits (heavy users), not what an extra ad per user does (readout, R2).
 - **Q3:** the peak-day signal passed both tests: interaction p = 0.013 (0.038 allowing for the 3 dimensions explored), and Tuesday and Thursday survive Holm. But "peak day" is a user habit recorded after assignment, not a slot we can buy, so the rule above (written with buyable segments in mind) doesn't apply. The signal triggers a randomized delivery-schedule test (R3), not a reallocation.
 - **Q4** has no ship decision. It sets the target segment for an onboarding experiment (R6).
 - **Q5:** the SRM check gave a WARNING (p = 0.0086), not a FAIL, so the gate result is "not certified" rather than void. The decision rests on the status quo (keep gate_30), no sign of a retention benefit, and a decomposition of the D7 gap (R5).

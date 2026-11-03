@@ -277,7 +277,10 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
     lt30, ge30 = c["sum_gamerounds"] < 30, c["sum_gamerounds"] >= 30
     bands = {"rounds_lt_15": c["sum_gamerounds"] < 15,
              "rounds_15_29": (c["sum_gamerounds"] >= 15) & lt30,
-             "rounds_ge_30": ge30}
+             "rounds_ge_30": ge30,
+             # sensitivity: at exactly 29 rounds a gate_30 player may already have met the gate
+             "rounds_15_28": (c["sum_gamerounds"] >= 15) & (c["sum_gamerounds"] < 29),
+             "rounds_29": c["sum_gamerounds"] == 29}
 
     def _by_version(mask, key):
         a, b_ = c[mask & (c.version == G_T)], c[mask & (c.version == G_C)]
@@ -288,6 +291,12 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
                                 for name, mask in (("never_reached_30", lt30), ("reached_30", ge30))}
     gate["retention_by_rounds_band"] = {name: {k: _by_version(mask, k) for k in ("retention_1", "retention_7")}
                                         for name, mask in bands.items()}
+    # Are the 15-29 and < 15 bands' D7 gaps different from each other? (unpooled SEs, independent bands)
+    b1, b2 = (gate["retention_by_rounds_band"][k]["retention_7"] for k in ("rounds_15_29", "rounds_lt_15"))
+    se = lambda b: np.sqrt(b["rate_t"] * (1 - b["rate_t"]) / b["n_t"] + b["rate_c"] * (1 - b["rate_c"]) / b["n_c"])
+    dd, sdd = b1["abs_lift"] - b2["abs_lift"], float(np.hypot(se(b1), se(b2)))
+    gate["d7_band_gap_difference_15_29_vs_lt_15"] = {"diff": dd, "se": sdd,
+                                                     "p_value": float(2 * sps.norm.sf(abs(dd / sdd)))}
     gate["composition"] = {
         "zero_round_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] == 0).mean()) for v_ in (G_T, G_C)},
         "under_30_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] < 30).mean()) for v_ in (G_T, G_C)},
@@ -369,12 +378,20 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
     reach_d7 = gate["negative_control"]["reached_30"]["retention_7"]
     n_install = S.required_total_n(gate["retention_7"]["rate_c"], -sesoi, 0.5, C.ALPHA, C.POWER)
     n_reach = S.required_total_n(reach_d7["rate_c"], -sesoi / w_reach, 0.5, C.ALPHA, C.POWER)
+    n_install_up = S.required_total_n(gate["retention_7"]["rate_c"], sesoi, 0.5, C.ALPHA, C.POWER)
+    n_reach_up = S.required_total_n(reach_d7["rate_c"], sesoi / w_reach, 0.5, C.ALPHA, C.POWER)
     gate["retest_sizing"] = {
+        # sized to detect a DROP of this size (the risk in question); a rise needs slightly more (see *_if_rise)
         "smallest_d7_change_per_install": sesoi, "baseline_d7_install": gate["retention_7"]["rate_c"],
         "installs_needed_install_level_5050": n_install,
         "share_reached_30": w_reach, "equivalent_change_among_reachers": sesoi / w_reach,
         "baseline_d7_reachers": reach_d7["rate_c"], "reachers_needed_5050": n_reach,
         "installs_needed_reacher_analysis_5050": int(np.ceil(n_reach / w_reach)),
+        "installs_needed_install_level_5050_if_rise": n_install_up,
+        "reachers_needed_5050_if_rise": n_reach_up,
+        "installs_needed_reacher_analysis_5050_if_rise": int(np.ceil(n_reach_up / w_reach)),
+        # the reacher figure uses this cohort's share reaching 30 rounds (re-check on the new cohort)
+        "share_reached_30_gate_30": float((c.loc[c.version == G_C, "sum_gamerounds"] >= 30).mean()),
     }
     # Best case for gate_40: if every one of its extra players was a junk install that never came back.
     excess = nt - nc

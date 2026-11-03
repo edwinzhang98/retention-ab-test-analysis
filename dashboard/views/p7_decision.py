@@ -13,7 +13,7 @@ import math
 import pandas as pd
 import streamlit as st
 
-from common import (C, F, S, approx, caveat, ci_text, how_to_read, load_cache, load_results, num, p_text,
+from common import (C, F, S, approx, caveat, ci_text, how_to_read, load_cache, load_results, p_text,
                     page_header, sgn, sgn_pp, show, takeaway)
 
 res = load_results()
@@ -28,11 +28,19 @@ le20 = con["le_20_ads_pooled"]
 gate = ck["gate"]
 g7, gsrm, sbs = gate["retention_7"], gate["srm"], gate["srm_by_stratum"]
 dec, retest = gate["d7_decomposition"], gate["retest_sizing"]
+# The re-test is sized for a drop; a rise of the same size needs a little more (on Cohen's h, a change towards 50% is
+# a smaller effect): +2% install-level, +0.7% for the analysis among players who reach level 30. Quote the larger.
+rise_extra = max(retest["installs_needed_install_level_5050_if_rise"] / retest["installs_needed_install_level_5050"],
+                 retest["installs_needed_reacher_analysis_5050_if_rise"]
+                 / retest["installs_needed_reacher_analysis_5050"]) - 1
 gate_eff, gate_ci = dec["install_level_effect_if_only_reachers"], dec["install_level_effect_ci_if_only_reachers"]
 not_gate = (dec["composition"] + dec["within_never_reached_30"]) / dec["naive_diff"]
 nc7 = gate["negative_control"]["never_reached_30"]["retention_7"]
 band = gate["retention_by_rounds_band"]
-d1_30, d7_30 = band["rounds_ge_30"]["retention_1"], band["rounds_ge_30"]["retention_7"]
+d7_30 = band["rounds_ge_30"]["retention_7"]
+# D1 guardrail: the part of the D1 gap the gate could explain, per install (the 30+ band figure is diluted)
+d1_dec = gate["d1_decomposition"]
+d1_eff, d1_ci = d1_dec["install_level_effect_if_only_reachers"], d1_dec["install_level_effect_ci_if_only_reachers"]
 rr = gate["rounds_among_reachers"]
 excess = gate["best_case_for_gate_40"]["excess_players_gate_40"]  # cleaned data: ≈790
 net_lt15 = sbs["rounds_lt_15"]["net_excess_t"]
@@ -96,7 +104,7 @@ DECISIONS = [
      "Don't double blindly; test it with up to 2× impressions per user or a frequency cap (R2).",
      "The test compared ads with no ads at the current spend, not 1× with 2×. The lift lives in heavy users: the "
      f"{con['share_users_le_20_ads'] * 100:.0f}% of users who saw ≤ 20 ads show no lift we could measure "
-     f"({sgn_pp(le20['abs_lift'])}; a lift above {num(le20['mde_abs'] * 100)} pp would have shown), while the "
+     f"({sgn_pp(le20['abs_lift'])}, {ci_text(le20['abs_ci_low'], le20['abs_ci_high'], unit='')}), while the "
      f"{con['share_ad_users_36_200'] * 100:.0f}% of ad users who saw 36–200 ads hold "
      f"{con['share_incremental_conversions_36_200'] * 100:.0f}% of the bucket-by-bucket incremental conversions. "
      "Exposure tracks how active a user is, so this is not a frequency curve.",
@@ -105,13 +113,14 @@ DECISIONS = [
      "Don't re-plan spend by day or hour; if timing matters, pre-register a test that randomizes the delivery "
      "schedule (R3).",
      f"Hour: no evidence (interaction {p_text(h_hour['lrt']['p_value'])}). Daypart: "
-     f"{p_text(h_dp['lrt']['p_value'])} comes from Night alone ({night['conversions']} control conversion among "
-     f"{night['users']:,} users); without it {p_text(h_dp['lrt_excluding_night']['p_value'])}. Day: {day_diffs} vs "
+     f"{p_text(h_dp['lrt']['p_value'])} is driven by Night (0–5), where the control arm has {night['conversions']} "
+     f"conversion among {night['users']:,} users; without it {p_text(h_dp['lrt_excluding_night']['p_value'])}. Day: "
+     f"{day_diffs} vs "
      f"the other days (interaction {p_text(h_day['lrt']['p_value'])}, {h_day['lrt_p_bonferroni_3_dims']:.2g} allowing "
      f"for {het['n_dimensions_explored']} dimensions; {survive}), but part of Tuesday's lift is a low control rate "
      f"({days.loc['Tuesday', 'rate_c'] * 100:.2f}% in its PSA arm), and peak day is a user habit recorded after "
      "assignment, not a slot we buy.",
-     "modest for day, and not a lever we can buy; none for hour or daypart."),
+     "modest for day, and not a lever we can buy; none for hour; daypart rests on one control conversion at night."),
     ("Which new users leave first?", "TEST", "blue",
      "Focus on first session → Day 1; test a randomized Day-1 re-engagement nudge (R6).",
      f"{(1 - ov['retention_1']) * 100:.1f}% of installs don't come back on Day 1, the largest drop. Players with "
@@ -123,14 +132,14 @@ DECISIONS = [
      "Keep gate_30 (status quo); fix assignment and logging before any re-test (R5).",
      f"The naive comparison shows gate_40's D7 {abs(dec['naive_diff']) * 100:.2f} pp lower "
      f"({ci_text(g7['abs_ci_low'], g7['abs_ci_high'], unit='')}), but it is not certified: gate_40 received "
-     f"≈{excess} extra installs (SRM WARNING, {p_text(gsrm['p_value'])}), a net excess of "
+     f"≈{excess} extra installs (SRM WARNING, {p_text(gsrm['p_value'])}), with a net excess of "
      f"{net_lt15} among players with < 15 rounds. About {round(not_gate * 10) * 10:.0f}% of the naive gap sits where "
      f"the gate cannot act; the part the gate could explain is {sgn_pp(gate_eff)} per install "
      f"({ci_text(gate_ci[0], gate_ci[1], unit='')}), not an estimate of its effect and possibly zero. No sign of a "
-     f"retention benefit. Where the gate can act (30+ rounds): D1 {sgn_pp(d1_30['abs_lift'])} "
-     f"({ci_text(d1_30['abs_ci_low'], d1_30['abs_ci_high'], unit='')}); gate_40 players play a little more (median "
-     f"{rr['median_t']:.0f} vs {rr['median_c']:.0f} rounds), but their D7 is not higher "
-     f"({sgn_pp(d7_30['abs_lift'])}, {ci_text(d7_30['abs_ci_low'], d7_30['abs_ci_high'], unit='')}).",
+     f"retention benefit, and no sign of a D1 effect: the part of the D1 gap the gate could explain is "
+     f"{sgn_pp(d1_eff)} per install ({ci_text(d1_ci[0], d1_ci[1], unit='')}). Among players with 30+ rounds, "
+     f"gate_40 players play a little more (median {rr['median_t']:.0f} vs {rr['median_c']:.0f} rounds), but their D7 "
+     f"is not higher ({sgn_pp(d7_30['abs_lift'])}, {ci_text(d7_30['abs_ci_low'], d7_30['abs_ci_high'], unit='')}).",
      "weak on the size of the effect (not certified); enough for 'don't ship', because gate_30 is the status quo."),
 ]
 for question, verdict, color, action, evidence, strength in DECISIONS:
@@ -191,8 +200,8 @@ RECS = pd.DataFrame([
      "Main risk": "A bigger control group means more users miss the ads during the test; logging work for Eng."},
     {"ID": "R5", "Owner": "Game PM (Eng + Analytics fix assignment)",
      "What": f"Keep the first gate at level 30 (no change). Fix assignment / logging first (gate_40 received "
-             f"≈{excess} extra installs, a net excess of {net_lt15} among players with < 15 rounds). Re-test only if "
-             "the gate position matters commercially.",
+             f"≈{excess} extra installs, with a net excess of {net_lt15} among players with < 15 rounds). Re-test only "
+             "if the gate position matters commercially.",
      "Expected impact": f"Avoids a change with no sign of a retention benefit. The part of the D7 gap the gate could "
                         f"explain is ≈{sgn(gate_eff * 100, 1)} pp per install "
                         f"({ci_text(gate_ci[0], gate_ci[1], unit='')}; ≈{abs(gate_eff) * PER:,.0f} fewer Day-7 "
@@ -420,8 +429,15 @@ else:
                    "with the Game PM), never at the observed gap. Primary "
                    f"analysis among players who reach level 30 (membership is pre-gate); analysed over all installs "
                    f"instead (a {sgn(eff * reach)} pp change on gate_30's {retest['baseline_d7_install'] * 100:.2f}% "
-                   f"D7), the same test needs {n_all:,} installs at a {share}/{100 - share} split. Run it only after "
-                   "the assignment / logging problem is fixed, with a daily 50/50 group-size check.")
+                   f"D7), the same test needs {n_all:,} installs at a {share}/{100 - share} split. At 50/50 the preset "
+                   f"is sized to detect a {retest['smallest_d7_change_per_install'] * 100:.1f} pp drop; a rise of the "
+                   f"same size needs up to ≈{rise_extra * 100:.0f}% more "
+                   f"(≈{k(retest['installs_needed_install_level_5050_if_rise'])} installs analysed over all installs, "
+                   f"≈{retest['installs_needed_reacher_analysis_5050_if_rise'] / 1e3:,.1f}K with the analysis among "
+                   f"players who reach level 30). The reacher figure uses this cohort's "
+                   f"{retest['share_reached_30'] * 100:.1f}% reaching level 30; re-check with the new cohort's share "
+                   "before launch. Run it only after Engineering has found and fixed the cause of the imbalance, "
+                   "with a daily 50/50 group-size check.")
     caveat(f"Plan in whole weeks, at least {MIN_WEEKS}, even if the sample is reached sooner: weekly habits matter "
            f"(in the ad test, users with different peak days responded differently, interaction "
            f"{p_text(h_day['lrt']['p_value'])}) and, without timestamps, this data cannot show whether an effect fades "

@@ -273,8 +273,8 @@ with col_gate:
 st.markdown("**Where is the gate experiment's imbalance?**")
 st.markdown(
     "Players are split by how many rounds they played in their first 14 days. Below level 30 the two versions are "
-    "identical and rounds ≥ levels, so a player with fewer than 30 rounds never met a gate in either version, and "
-    "both versions should hold about the same number of them. Same raw assignment counts as above. These subsets "
+    "identical and rounds ≥ levels, so a player with fewer than 30 rounds cannot have got past level 30, and both "
+    "versions should hold about the same number of them. Same raw assignment counts as above. These subsets "
     "were **chosen after seeing the warning**, so their p-values are descriptive: they locate the excess; they are "
     "not separate checks with a verdict of their own.")
 sbs = gate["srm_by_stratum"]
@@ -316,6 +316,13 @@ st.caption(f"These are raw assignment counts, so gate_40's excess here is {srm_g
            f"{gate['best_case_for_gate_40']['excess_players_gate_40']} (the dropped player was in gate_30). Players "
            f"who never met a gate also show D7 {abs(nc7['abs_lift']) * 100:.2f} pp lower in gate_40 "
            f"({p_text(nc7['p_value'])}, borderline on its own); page 6 shows where that gap sits.")
+band = gate["retention_by_rounds_band"]
+n29, d7_1528 = band["rounds_29"]["retention_7"], band["rounds_15_28"]["retention_7"]
+st.caption(f"Edge case: at exactly 29 rounds a perfect gate_30 player can already face the gate, so the bands below 30 "
+           f"rounds are close to, not exactly, gate-free. Such players are few, with no pile-up at 29 rounds "
+           f"({n29['n_t']:,} in gate_40 vs {n29['n_c']:,} in gate_30); excluding them, the 15–28 band still shows D7 "
+           f"{abs(d7_1528['abs_lift']) * 100:.2f} pp lower in gate_40 "
+           f"({ci_text(d7_1528['abs_ci_low'], d7_1528['abs_ci_high'])}).")
 page_link("views/p6_gate_experiment.py", "Gate experiment (page 6)")
 
 # ------------------------------------------------------------------ 3 · exposure parity and balance
@@ -403,9 +410,10 @@ just leave a test of the split nothing to detect. The meaningful check is **expo
 the same number of ad slots, so the only planned difference is what the slot showed.
 
 **Where is the gate imbalance?** Splitting players by how far they played locates the problem. Before level 30 the
-two versions are identical, so an imbalance among players who stopped early comes from assignment or logging, not
-from the gate. The splits were chosen after seeing the warning, so their p-values describe where the excess sits;
-read the net excess column, not a verdict. Page 6 shows what this means for the D7 gap.
+two versions are identical, so an imbalance among players who stopped early cannot come from the gate: most likely
+assignment or logging added low-engagement installs to gate_40 (or dropped them from gate_30); Engineering confirms
+the cause. The splits were chosen after seeing the warning, so their p-values describe where the excess sits; read
+the net excess column, not a verdict. Page 6 shows what this means for the D7 gap.
 
 **Balance charts.** For the chosen field, the grey and blue bars show how each arm's users are spread across
 categories. Similar bars mean the arms look alike. The p-value is tiny because the sample is huge; **Cramér's V**

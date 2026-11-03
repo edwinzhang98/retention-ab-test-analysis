@@ -8,7 +8,7 @@
 | Main A/B story | Marketing A/B (Kaggle `faviovaz/marketing-ab-testing`, 2021) | 588,101 users | `test group` (ad / psa), `converted`, `total ads`, `most ads day`, `most ads hour` |
 | Retention + 2nd A/B | Cookie Cats (Kaggle, 2017) | 90,189 players | `version` (gate_30 / gate_40), `sum_gamerounds`, `retention_1`, `retention_7` |
 
-Why both: real user-level A/B data is rare in public. Marketing A/B is newer and less worked-over but has no retention field. Cookie Cats has retention but is a widely used teaching dataset. So it is used for retention and as a second, method-comparison experiment.
+Why both: real user-level A/B data is rare in public. Marketing A/B is newer and less worked-over but has no retention field. Cookie Cats has retention but is a widely used teaching dataset. So it carries the retention analysis and a second experiment (the gate test).
 
 Raw data is read from `~/projects/data-projects/datasets/...` via `config.yaml` (overridable with `.env`), never committed.
 
@@ -40,8 +40,8 @@ Raw data is read from `~/projects/data-projects/datasets/...` via `config.yaml` 
 - A stakeholder readout, metric definitions, a DQ log and an assumptions log.
 
 ## Judgement calls
-- **No extra web search**: `reference-projects.md` already covers mainstream practice; the gaps are clear.
+- **No further literature search**: the reference notebooks above cover mainstream practice; the gaps are clear.
 - **Outlier**: drop the single player with 49,854 rounds (≈3,561 rounds/day over 14 days, so not humanly plausible). Retention proportions are unaffected, and the sensitivity check is in the DQ doc.
 - **Value per conversion**: the data has no revenue. Use **USD 50 as an illustrative default**, labelled everywhere and adjustable in the dashboard. The headline business number is *incremental conversions*, not dollars.
-- **Optional CTR branch** (Avazu / Criteo): not done. The prompt says to do it only when applying to ad-tech roles.
+- **Optional CTR branch** (Avazu / Criteo): out of scope for a growth-analytics sample; worth adding only for an ad-tech role.
 - **Cookie Cats SRM warning**: not a stop condition. The decision (keep gate at 30) is the conservative default either way; the readout says the result can't be certified until assignment is debugged.

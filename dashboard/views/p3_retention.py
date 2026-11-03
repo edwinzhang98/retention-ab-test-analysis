@@ -19,6 +19,9 @@ ov = ck["overall"]
 early = ck["early_churn_segment"]          # players with < 15 rounds in 14 days (the R6 target segment)
 r6 = early["onboarding_test_sizing"]
 no_d1 = next(r for r in ck["by_d1_status"] if r["d1_status"] == "Did not return Day 1")
+dec = ck["gate"]["d7_decomposition"]
+# share of the naive gate gap that sits where the gate cannot act (player mix + players who never met a gate)
+not_gate_pct = round((dec["composition"] + dec["within_never_reached_30"]) / dec["naive_diff"] * 10) * 10
 TK = load_catalog_takeaways()
 
 DIMS = {  # radio label -> (column, axis title, phrase used in chart titles)
@@ -72,8 +75,8 @@ def segment_takeaway(rates: pd.DataFrame, dim: str, metrics: tuple[str, ...]) ->
     if dim == "rounds_bucket":
         text += " Rounds are counted through day 14, so part of this gap is there by construction."
     elif dim == "version":
-        text += (" This is the naive gap between unbalanced arms, not the gate's effect and not certified: most of it "
-                 "sits where the gate cannot act (pages 2 and 6).")
+        text += (" This is the naive gap between unbalanced arms, not the gate's effect and not certified: about "
+                 f"{not_gate_pct:.0f}% of it sits where the gate cannot act (pages 2 and 6).")
     return text
 
 
@@ -177,7 +180,7 @@ else:
         text += (f" The two versions' curves are never more than {gap.abs().max():.1f} pp apart up to "
                  f"{max_rounds} rounds")
         text += (f"; the largest gap (round {at}) comes before the first gate, where the versions are identical, so "
-                 "it is the assignment imbalance seen as a distribution (page 2), not the gate." if at < FIRST_GATE
+                 "it is the arms' imbalance seen as a distribution (page 2), not the gate." if at < FIRST_GATE
                  else ".")
     takeaway(text)
 
@@ -223,7 +226,8 @@ and no conclusion depends on it.
 **Gap by dimension.** For three ways of splitting players, the bar is the difference in D7 retention
 between the best and the worst group. A long bar means the split separates stayers from leavers well. Engagement
 depth separates them by far the most, partly by construction (see the note on rounds). The version gap is small next
-to engagement, and it is the naive gap between unbalanced arms: most of it sits where the gate cannot act (page 6).
+to engagement, and it is the naive gap between unbalanced arms: about {not_gate_pct:.0f}% of it sits where the gate
+cannot act (page 6).
 
 **Segment explorer.** Choose how to split players and which metric to show. Bars are the share retained in each
 group; the thin whiskers are the 95% interval (the plausible range for that group's true rate), and n is the group

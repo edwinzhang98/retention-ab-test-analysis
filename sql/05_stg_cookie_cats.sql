@@ -17,7 +17,9 @@
 --             d1_status        VARCHAR  'Returned Day 1' | 'Did not return Day 1'
 --             reached_gate_30  BOOLEAN  sum_gamerounds >= 30. A proxy only: rounds are
 --                                       not levels. Below 30 rounds, level 30 was never
---                                       played; 30 or more does not prove it was.
+--                                       played (though at exactly 29 rounds a flawless
+--                                       gate_30 player can already face the gate); 30
+--                                       or more does not prove it was.
 --           Same columns and values as src.data.clean_cookie().
 -- Run     : from the repo root, one of
 --             python -m src.sql_check sql/05_stg_cookie_cats.sql   (print this result)

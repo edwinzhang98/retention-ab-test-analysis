@@ -2,7 +2,7 @@
 
 *Portfolio work sample on public data. The PM, the request and the company are a role-play; the data and every number are real.*
 
-A Growth PM asked whether last quarter's ad campaign drove conversions, whether its budget should double, and which new users churn first. I answered with a randomized ad-vs-PSA experiment (588,101 users) and a mobile-game install cohort with its own A/B test (90,189 players), using SQL (DuckDB), Python, a 7-page Streamlit app and a standalone HTML report. Ads lifted conversion by **+0.77 pp (95% CI 0.59–0.94, +43%)**, but the test cannot justify doubling the budget, new players are mostly lost before Day 1, and most of the game test's headline gap turned out to be an assignment problem rather than the change it tested.
+A Growth PM asked whether last quarter's ad campaign drove conversions, whether its budget should double, and which new users churn first. I answered with a randomized ad-vs-PSA experiment (588,101 users) and a mobile-game install cohort with its own A/B test (90,189 players), using SQL (DuckDB), Python, a 7-page Streamlit app and a standalone HTML report. Ads lifted conversion by **+0.77 pp (95% CI 0.59–0.94, +43%)**, but the test cannot justify doubling the budget, new players are mostly lost before Day 1, and the game test's headline gap can't be certified: its groups were unbalanced, and about 60% of the gap sits where the gate cannot act.
 
 ---
 
@@ -20,13 +20,13 @@ I turned this into five analysis questions, each with a decision owner: see [doc
    - The data has no revenue, so the business translation rests on an explicit assumption: at USD 50 per conversion, the campaign breaks even below **USD 15.49 CPM**.
 2. **This test cannot justify doubling the budget.**
    - It measures the *average* effect at today's spend, not the *marginal* effect of more spend.
-   - The lift lives in heavy users. Users who saw 36–200 ads are 17% of the ad group and account for 98% of the bucket-by-bucket incremental conversions. The 66% who saw 20 ads or fewer show no lift we could measure (−0.02 pp; a lift above 0.18 pp would have shown).
+   - The lift lives in heavy users. Users who saw 36–200 ads are 17% of the ad group and account for 98% of the bucket-by-bucket incremental conversions. The 66% who saw 20 ads or fewer show no lift we could measure (−0.02 pp, 95% CI −0.14 to +0.09).
    - Ad volume tracks how active a user is, so this is not a frequency curve.
    - By day of week the lift differs modestly (interaction p = 0.013; Tuesday-peak users +0.95 pp vs. other days), but "peak day" is a user habit, not a slot we buy. By hour there is no evidence of a difference (p = 0.18).
-3. **New players are lost before Day 1, and the gate test's raw result mostly reflects unbalanced assignment.**
+3. **New players are lost before Day 1, and the gate test's raw result can't be certified.**
    - 55.5% of installs don't return on Day 1. The 47% who play fewer than 15 rounds in two weeks are almost all gone by Day 7 (2.3% return).
    - In the gate_30 vs. gate_40 test, the naive D7 gap is −0.82 pp. However, gate_40 received about 790 extra installs (SRM p = 0.0086), with a net excess of 762 among players with fewer than 15 rounds.
-   - About 60% of the gap sits where the gate cannot act. The rest, **−0.32 pp per install (95% CI −0.71 to +0.07)**, is the part the gate could explain, and players with 15–29 rounds, who never met a gate, show the same gap.
+   - About 60% of the gap sits where the gate cannot act. The rest, **−0.32 pp per install (95% CI −0.71 to +0.07)**, is the part the gate could explain, and players with 15–29 rounds, who never met a gate, show a similar gap.
    - The later gate buys a little extra play among players who reach level 30 (median 75 vs. 72 rounds), with no sign of a retention benefit.
 
 ## Recommendations
@@ -34,11 +34,11 @@ I turned this into five analysis questions, each with a decision owner: see [doc
 | # | Owner | What | Expected impact | How we'll measure | Main risk |
 |---|---|---|---|---|---|
 | R1 | Growth PM | **Keep the campaign** at the current budget, with an always-on 5% PSA holdout | ≈4,300 incremental conversions per comparable flight. The holdout forgoes ≈226 conversions per 588K-user flight (this test's 4% PSA arm already forgoes ≈181) | Incremental conversions and cost per incremental conversion vs. the holdout, per flight and at least quarterly | CPM and value per conversion are unknown: Finance confirms actual CPM < USD 15.49 |
-| R2 | Growth PM + media buyer | **Don't double blindly; test it.** One arm gets up to 2× today's impressions per user (or a frequency cap), users tiered by pre-test activity; a true budget test needs a geo split | Learn the *marginal* return before committing ≈2× spend | Incremental conversions per extra USD 1K (marginal iROAS) | A 2×-vs-1× difference is smaller than ad-vs-PSA, so it needs more than the 181K users a 10% lift needs at 50/50 |
+| R2 | Growth PM + media buyer | **Don't double blindly; test it.** One arm gets up to 2× today's impressions per user (or a frequency cap), users tiered by pre-test activity; a true budget test needs a geo split | Learn the *marginal* return before committing ≈2× spend | Incremental conversions per extra USD 1K (marginal iROAS) | A 2×-vs-1× difference will be smaller than ad-vs-PSA, so it needs more than the 181K users a 10% lift needs at 50/50 |
 | R3 | Media buyer | **Don't re-plan spend by day or hour.** If timing matters, pre-register a test that randomizes the delivery schedule (e.g. Tuesday vs. Thursday delivery) | Avoid moving money on a user-habit pattern | Difference in lift between randomized delivery slots, with its 95% CI | Missing a small real timing effect |
-| R4 | Analytics + Eng | **Fix the next test's design:** 50/50 or 80/20 split (96/4 had 51% power for a 10% lift), assignment timestamps, pre-registered metrics and guardrails, daily SRM check | Same users at 50/50: ≈100% power, MDE 0.10 pp instead of 0.26 pp | Power / MDE at design time; daily SRM check | A bigger control group misses the ads during the test |
-| R5 | Game PM | **Keep the gate at level 30.** Fix assignment first; re-test only if the gate position matters commercially | Avoids a change with no sign of a retention benefit. The part of the gap the gate could explain is ≈32 fewer Day-7 players per 10,000 installs (95% CI 71 fewer to 7 more), possibly none | Any re-test: pre-register a 0.5 pp D7 change per install; ≈114K installs at 50/50, analysed among players who reach level 30 | Quoting the raw −0.82 pp would overstate the effect |
-| R6 | Onboarding PM (with CRM) | **Focus retention work on first session → Day 1:** a randomized Day-1 re-engagement test for players who barely start, D7 primary | Targets the biggest drop (55.5% never return on Day 1). Ceiling: each 1 pp of installs moved to a Day-1 return is worth at most ≈0.26 pp of D7 | D7 among targeted players; ≈31K of them (≈66K installs) at 50/50 for +0.5 pp | The play–retention link may not be causal; notification fatigue |
+| R4 | Analytics + Eng | **Fix the next test's design:** 50/50 or 80/20 split (96/4 had 51% power for a 10% lift), assignment timestamps, pre-registered metrics and guardrails, daily SRM check | Same users at 50/50: ≈100% power, MDE 0.10 pp instead of 0.26 pp | Power / MDE at design time; daily SRM check | A bigger control group means more users miss the ads during the test; logging work for Eng |
+| R5 | Game PM (Eng + Analytics fix assignment) | **Keep the gate at level 30.** Fix assignment first; re-test only if the gate position matters commercially | Avoids a change with no sign of a retention benefit. The part of the gap the gate could explain is ≈32 fewer Day-7 players per 10,000 installs (95% CI 71 fewer to 7 more), possibly none | Any re-test: pre-register a 0.5 pp D7 change per install; ≈114K installs at 50/50, analysed among players who reach level 30 | Quoting the raw −0.82 pp would overstate the effect |
+| R6 | Onboarding PM (with CRM) | **Focus retention work on first session → Day 1:** a randomized Day-1 re-engagement test for players who barely start, D7 primary | Targets the biggest drop (55.5% never return on Day 1). Ceiling: each 1 pp of installs moved to a Day-1 return is worth at most ≈0.26 pp of D7 | D7 among targeted players; +0.5 pp on their 2.3% base (placeholder) needs ≈31K of them (≈66K installs) at 50/50 | The play–retention link may not be causal; notification fatigue |
 
 The full readout for the PM is in [docs/readout.md](docs/readout.md), and the executive summary is in [reports/executive_summary.md](reports/executive_summary.md).
 
@@ -74,7 +74,7 @@ The app has seven pages in presentation order. Each page opens with the question
 - Raw data is read from a configurable path and never committed.
 
 **Sanity checks before results** ([docs/03_data_quality_checks.md](docs/03_data_quality_checks.md)):
-- **Basic data checks.** Row reconciliation, key uniqueness, nulls and value domains all pass. One player logged 49,854 rounds in 14 days and is dropped as a logging error; results are unchanged either way.
+- **Basic data checks.** Row reconciliation, key uniqueness, nulls and value domains all pass. One player logged 49,854 rounds in 14 days and is dropped as a logging error; no retention or gate conclusion changes (only mean rounds move; see the DQ log).
 - **SRM.** The ad test's 96.000 / 4.000 split is most likely a fixed quota, so its SRM check passes by construction and proves little; exposure parity (24.8 vs. 24.8 ads per user) is the meaningful check. The gate test gets an SRM *warning*, which I located by rounds played.
 - **Post-assignment variables.** Total ads, peak day and peak hour are recorded *after* assignment. They are never used as covariates, and segment results are labelled exploratory.
 

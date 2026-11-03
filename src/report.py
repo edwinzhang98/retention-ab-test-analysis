@@ -470,7 +470,8 @@ class _Report:
              f"the current flight pays back if CPM is below <b>{usd(be['point'])}</b> ({c} CI "
              f"{usd(be['ci_low'])}{NDASH}{be['ci_high']:.2f}). Exploratory: the "
              f"{pct(con['share_users_le_20_ads'], 0)} of users who saw &le; {LOW_EXPOSURE_MAX} ads show no lift we could "
-             f"measure ({pp(le20['abs_lift'], sign=True)}; a lift above {pp(le20['mde_abs'])} would have shown); the "
+             f"measure ({pp(le20['abs_lift'], sign=True)}, {c} CI "
+             f"{ci_pp(le20['abs_ci_low'], le20['abs_ci_high'], sign=True)}); the "
              f"{pct(con['share_ad_users_36_200'], 0)} of ad users who saw {self.heavy_range} ads hold "
              f"{pct(con['share_incremental_conversions_36_200'], 0)} of the bucket-by-bucket incremental conversions. "
              f"Exposure tracks how active a user is, so the lift lives in heavy users; this is not a frequency curve.",
@@ -565,9 +566,9 @@ class _Report:
                  risk="A bigger control group means more users miss the ads during the test; logging work for Eng."),
             dict(id="R5", owner="Game PM (Eng + Analytics fix assignment)", chip=_chip("stop", "Don't ship"),
                  what=f"Keep the first gate at level {GATE_LEVEL} (no change). Fix assignment / logging first "
-                      f"(gate_40 received &asymp;{num(self.excess_clean)} extra installs, a net "
-                      f"{num(self.sbs['rounds_lt_15']['net_excess_t'])} of them with &lt; 15 rounds). Re-test only if "
-                      "the gate position matters commercially.",
+                      f"(gate_40 received &asymp;{num(self.excess_clean)} extra installs, with a net excess of "
+                      f"{num(self.sbs['rounds_lt_15']['net_excess_t'])} among players with &lt; 15 rounds). Re-test "
+                      "only if the gate position matters commercially.",
                  impact=f"Avoids a change with no sign of a retention benefit. The part of the D7 gap the gate could "
                         f"explain is &asymp;{pp(dec['within_reached_30'], 1, sign=True)} per install ({c} CI "
                         f"{ci_pp(*eff_ci)}; &asymp;{per10k(dec['within_reached_30'])} fewer Day-7 players per 10,000 "
@@ -692,6 +693,7 @@ linked, and the game's segment sizes will not transfer one-for-one to the app.</
         nc7 = self.gate["negative_control"]["never_reached_30"]["retention_7"]
         sbs = self.sbs
         b15, b1529 = (self.band[k]["retention_7"] for k in ("rounds_lt_15", "rounds_15_29"))
+        bgap = self.gate["d7_band_gap_difference_15_29_vs_lt_15"]     # are the two bands' D7 gaps different?
         ok, lim = _chip("good", "Pass"), _chip("muted", "Limitation")
 
         glance = _table(
@@ -721,9 +723,10 @@ linked, and the game's segment sizes will not transfer one-for-one to the app.</
               f"({pval(sbs['rounds_lt_15']['p_value'])}, descriptive: a subset chosen after seeing the warning)",
               _status_chip(gsrm["status"])],
              ["Gate test: negative control", f"Players with fewer than {GATE_LEVEL} rounds (met no gate) still differ "
-              f"on D7: {pp(nc7['abs_lift'], sign=True)}, {pval(nc7['p_value'])}, borderline on its own. The gap sits at "
-              f"15&ndash;29 rounds ({pp(b1529['abs_lift'], sign=True)}), not with the extra &lt; 15-round installs "
-              f"({pp(b15['abs_lift'], sign=True)})", _chip("warn", "Borderline")],
+              f"on D7: {pp(nc7['abs_lift'], sign=True)}, {pval(nc7['p_value'])}, borderline on its own. Such gap as "
+              f"there is comes from the 15&ndash;{GATE_LEVEL - 1} band ({pp(b1529['abs_lift'], sign=True)}) rather than "
+              f"the &lt; 15 band where the net excess sits ({pp(b15['abs_lift'], sign=True)}), though the two bands' "
+              f"gaps are not distinguishable from each other ({pval(bgap['p_value'])})", _chip("warn", "Borderline")],
              ["Time coverage", "No timestamps in either dataset; the game data is one install cohort", lim]],
             stack=True)
 
@@ -873,9 +876,9 @@ too. The net excess is
 ({pval(sbs['rounds_lt_15']['p_value'])}), {_signed(sbs['rounds_15_29']['net_excess_t'], 0)} at 15&ndash;{GATE_LEVEL - 1}
 rounds ({pval(sbs['rounds_15_29']['p_value'])}) and {_signed(sbs['rounds_ge_30']['net_excess_t'], 0)} at
 {GATE_LEVEL}+ rounds ({pval(sbs['rounds_ge_30']['p_value'])}). These bands were chosen after seeing the warning, so
-their p-values are descriptive, not a verdict. Something added low-engagement installs to gate_40 (or dropped them from
-gate_30), for example a logging or client difference. <a href="#s6-integrity">Section 6.3</a> follows this through to
-the retention result.</p>
+their p-values are descriptive, not a verdict. Most likely assignment or logging added low-engagement installs to
+gate_40 (or dropped them from gate_30); Engineering confirms the cause. <a href="#s6-integrity">Section 6.3</a> follows
+this through to the retention result.</p>
 {srm_table}
 <p class="note">Raw assignment counts, before the one outlier ({out_txt}) was dropped; the cleaned analysis sample has
 {num(clean_excess)} more gate_40 players. The &ldquo;fewer than {GATE_LEVEL}&rdquo; row adds up the two rows above
@@ -1171,11 +1174,13 @@ so the step from {pct(hold['as_run_control_share'], 0)} to {pct(hold['share'], 0
                          f"{pp(r['abs_lift'], sign=True)}<br><span class='sub'>{ci_pp(r['abs_ci_low'], r['abs_ci_high'])}</span>",
                          f"{pp(r['diff_vs_rest'], sign=True)}<br><span class='sub'>"
                          f"{ci_pp(r['diff_vs_rest_ci_low'], r['diff_vs_rest_ci_high'], sign=True)}</span>",
+                         pp(r["diff_vs_rest_ac"], sign=True),     # centre of the Agresti-Caffo CI the test is about
                          pval(r["p_vs_rest_adj"], prefix=False),
                          _chip("info", "Yes") if r["differs_adj"] else "No"])
         return _table([label, "Users (ad / PSA)", "Conversion (ad / PSA)", f"Lift ({self.conf} CI)",
-                       f"Lift vs other segments ({self.conf} CI)", "Holm p (vs others)", "Differs (Holm)"],
-                      rows, num_cols={1, 2, 3, 4, 5})
+                       f"Lift vs other segments ({self.conf} CI)", "CI centre (adjusted)", "Holm p (vs others)",
+                       "Differs (Holm)"],
+                      rows, num_cols={1, 2, 3, 4, 5, 6})
 
     def s5_heterogeneity(self) -> str:
         het, t, a, c = self.het, self.t, self.alpha, self.conf
@@ -1211,7 +1216,7 @@ so the step from {pct(hold['as_run_control_share'], 0)} to {pct(hold['share'], 0
                 verdict = evidence(p)
             elif dim == "daypart":
                 note = f"{pval(h['lrt_excluding_night']['p_value'], prefix=False)} without Night"
-                verdict = "driven by Night"
+                verdict = f"driven by Night ({NIGHT_HOURS})"
             else:
                 note = "post-assignment: exploratory"
                 verdict = evidence(p)
@@ -1267,7 +1272,8 @@ a separate lift per segment fit better than one common lift? It works on the odd
 segments, Holm-corrected across segments. The point estimate is that raw difference; its CI and p-value use
 Agresti&ndash;Caffo adjusted proportions (one success and one failure added per group), so cells with zero control
 conversions cannot create fake significance. In sparse cells the interval is therefore not centred on the point
-estimate. With k contrasts at &alpha; = {a:g}, about k &times; {a:g} would come out &ldquo;significant&rdquo; by
+estimate; the segment tables show its centre in a separate column, &ldquo;CI centre (adjusted)&rdquo;. With k
+contrasts at &alpha; = {a:g}, about k &times; {a:g} would come out &ldquo;significant&rdquo; by
 chance alone.</li>
 </ol>
 <p>{n_dims} dimensions were explored (day, hour and exposure; dayparts regroup the hours), so an interaction p-value
@@ -1303,9 +1309,9 @@ smallest hour has only {num(hh['min_control_users'])} control users. Without the
           "hence very wide intervals; hollow everywhere means no hour stands out from the others.")}
 <details class="more-table"><summary>Per-hour table ({hh['n_segments']} rows)</summary>
 {self._seg_table("most_ads_hour", "Peak ad hour")}</details>
-<h3>5.4 By daypart: the only signal comes from one control conversion at night</h3>
+<h3>5.4 By daypart: driven by Night, where the control arm has one conversion</h3>
 <p>Grouping hours into the four dayparts a media buyer can actually buy gives an interaction
-{pval(hp['lrt']['p_value'])}, but it comes entirely from {esc(NIGHT.replace('-', NDASH))}, where the control arm has
+{pval(hp['lrt']['p_value'])}, but it is driven by {esc(NIGHT.replace('-', NDASH))}, where the control arm has
 {num(nightc['psa']['conversions'])} conversion among {num(nightc['psa']['users'])} users (ad arm:
 {num(nightc['ad']['conversions'])} among {num(nightc['ad']['users'])}). Excluding night,
 {pval(hp['lrt_excluding_night']['p_value'])}, and no daypart's lift differs from the others after correction: Night's
@@ -1316,9 +1322,8 @@ plan spend around.</p>
 {self._seg_table("daypart", "Daypart")}
 <h3 id="s5-exposure">5.5 By total ads seen: the lift lives in heavy users (exploratory)</h3>
 <p>The {pct(con['share_users_le_20_ads'], 0)} of users who saw &le; {LOW_EXPOSURE_MAX} ads show no lift we could
-measure: pooled, {pp(le20['abs_lift'], sign=True)} ({c} CI {ci_pp(le20['abs_ci_low'], le20['abs_ci_high'], sign=True)}),
-and a lift above {pp(le20['mde_abs'])} ({spct(le20['mde_rel'])} on their {pct(le20['rate_c'], 1)} base) would have
-shown. The next {pct(b2135['share_ad_users'], 0)} of ad users (21&ndash;35 ads) are inconclusive:
+measure: pooled, {pp(le20['abs_lift'], sign=True)} ({c} CI {ci_pp(le20['abs_ci_low'], le20['abs_ci_high'], sign=True)}).
+The next {pct(b2135['share_ad_users'], 0)} of ad users (21&ndash;35 ads) are inconclusive:
 {pp(b2135['abs_lift'], sign=True)} ({c} CI {ci_pp(b2135['abs_ci_low'], b2135['abs_ci_high'], sign=True)}). At
 {self.heavy_range} ads the lift is {_plain(_x100(heavy['abs_lift'].min()), 1)}&ndash;{pp(heavy['abs_lift'].max(), 1)}:
 these buckets hold {pct(con['share_ad_users_36_200'], 0)} of ad users and
@@ -1366,11 +1371,16 @@ hypothesis for a randomized test of more impressions per user (or a frequency ca
         nc7 = nc["never_reached_30"]["retention_7"]
         ncx = nc["never_reached_30_excess_removed"]
         b15, b1529, b30 = (band[k]["retention_7"] for k in ("rounds_lt_15", "rounds_15_29", "rounds_ge_30"))
-        b30_1 = band["rounds_ge_30"]["retention_1"]
+        b1528, b29 = band["rounds_15_28"]["retention_7"], band["rounds_29"]["retention_7"]   # the 29-round edge case
+        bgap = g["d7_band_gap_difference_15_29_vs_lt_15"]                 # are the two bands' D7 gaps different?
         eff, eff_ci = dec["within_reached_30"], dec["install_level_effect_ci_if_only_reachers"]
         eff1, eff1_ci = dec1["within_reached_30"], dec1["install_level_effect_ci_if_only_reachers"]
         det = dec["detail"]
         past40 = rr["share_past_40_rounds"]
+        # re-test sizing is for a drop; a rise of the same size needs a little more (variance is larger nearer 50%)
+        rise_inst = rt["installs_needed_install_level_5050_if_rise"] / rt["installs_needed_install_level_5050"] - 1
+        rise_reach = (rt["installs_needed_reacher_analysis_5050_if_rise"]
+                      / rt["installs_needed_reacher_analysis_5050"] - 1)
         lt15 = sbs["rounds_lt_15"]["net_excess_t"]
         res_rows = []
         for name, m in (("D7 retention (primary)", g7), ("D1 retention (guardrail)", g1)):
@@ -1399,7 +1409,8 @@ hypothesis for a randomized test of more impressions per user (or a frequency ca
               f"{pp(eff, sign=True)}<br><span class='sub'>{c} CI {ci_pp(*eff_ci)}</span>", could_be,
               f"their D7 difference ({pp(b30['abs_lift'], sign=True)}, {c} CI "
               f"{ci_pp(b30['abs_ci_low'], b30['abs_ci_high'])}) &times; their share. Players with 15&ndash;"
-              f"{GATE_LEVEL - 1} rounds, who never met a gate, show the same {pp(b1529['abs_lift'], sign=True)}"],
+              f"{GATE_LEVEL - 1} rounds, who never met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, "
+              f"{c} CI {ci_pp(b1529['abs_ci_low'], b1529['abs_ci_high'])})"],
              ["<b>Naive gap (sum)</b>", f"<b>{pp(dec['naive_diff'], sign=True)}</b>", "&ndash;",
               "gate_40 &minus; gate_30, all players"]],
             num_cols={1}, stack=True)
@@ -1419,8 +1430,10 @@ players stay. Null hypothesis: no difference. <b>Primary metric:</b> D7 retentio
 rounds played in the first 14 days. Decision rule: ship gate_40 only if D7 is not worse and the guardrails hold;
 keeping gate_{GATE_LEVEL} is the default, so an uncertified result means &ldquo;keep gate_{GATE_LEVEL}&rdquo;.</p>
 <p>Throughout, <b>&ldquo;{GATE_LEVEL}+ rounds&rdquo; means &ldquo;could have reached level {GATE_LEVEL}&rdquo;</b>: a
-round is one attempt at a level, so rounds &ge; levels, and the data has no level field. Players with fewer than
-{GATE_LEVEL} rounds never met a gate in either version (6.4 explains the one approximation).</p>
+round is one attempt at a level, so rounds &ge; levels, and the data has no level field. A player with fewer than
+{GATE_LEVEL} rounds cannot have got past level {GATE_LEVEL} in either version; this report says such players
+&ldquo;never met a gate&rdquo;, a close approximation (at exactly {GATE_LEVEL - 1} rounds a perfect gate_{GATE_LEVEL}
+player can already face the gate; 6.4).</p>
 <h3>6.2 The naive result</h3>
 <p>gate_40 shows a D7 rate {pp(abs(g7['abs_lift']))} lower: {pct(g7['rate_t'], 2)} of players on Day 7 vs
 {pct(g7['rate_c'], 2)} for gate_30 (<b>{pp(g7['abs_lift'], sign=True)}</b>, {c} CI
@@ -1447,10 +1460,11 @@ This is the same imbalance seen as a distribution, not independent evidence: amo
 {GATE_LEVEL} rounds the difference gives {pval(pg['mannwhitney_p_within_lt_30'])}.</li>
 <li><b>Negative control:</b> players with fewer than {GATE_LEVEL} rounds met no gate in either version, yet D7 is
 {pp(abs(nc7['abs_lift']))} lower in gate_40 ({c} CI {ci_pp(nc7['abs_ci_low'], nc7['abs_ci_high'], sign=True)};
-{pval(nc7['p_value'])}). That is borderline on its own; it carries weight only because it points the same way as the
-excess of low-engagement installs. The gap sits with players who played 15&ndash;{GATE_LEVEL - 1} rounds
-({pp(b1529['abs_lift'], sign=True)}, {pval(b1529['p_value'])}, balanced in number), not with the extra &lt; 15-round
-installs ({pp(b15['abs_lift'], sign=True)}, {pval(b15['p_value'])}). Removing the net {num(ncx['excess_removed'])} extra
+{pval(nc7['p_value'])}). That is borderline on its own; it carries weight only because the sample-ratio warning
+independently says the arms are not comparable. Such gap as there is comes from the 15&ndash;{GATE_LEVEL - 1} band
+({pp(b1529['abs_lift'], sign=True)}, {pval(b1529['p_value'])}, balanced in number) rather than the &lt; 15 band where
+the net excess sits ({pp(b15['abs_lift'], sign=True)}, {pval(b15['p_value'])}), though the two bands' gaps are not
+distinguishable from each other ({pval(bgap['p_value'])}). Removing the net {num(ncx['excess_removed'])} extra
 &lt; 15-round installs (as if none of them came back) moves it only to
 {pp(ncx['retention_7']['abs_lift'], sign=True)} ({pval(ncx['retention_7']['p_value'])}). So the extra installs explain
 the SRM and the player-mix part, but not this gap.</li>
@@ -1462,8 +1476,9 @@ the SRM and the player-mix part, but not this gap.</li>
           f"with its {c} CI. The grey diamonds are players who never met a gate (fewer than {GATE_LEVEL} rounds, then "
           f"split into &lt; 15 and 15&ndash;{GATE_LEVEL - 1}): they should sit on 0. The filled dot is the naive "
           f"all-player result; the hollow dot is players who could meet the gate ({GATE_LEVEL}+ rounds).")}
-<p>Conclusion: assignment or logging added low-engagement installs to gate_40 (or dropped them from gate_30). The naive
-{pp(dec['naive_diff'], sign=True)} therefore mixes a difference in who is in each arm with any effect of the gate.</p>
+<p>Conclusion: most likely assignment or logging added low-engagement installs to gate_40 (or dropped them from
+gate_30); Engineering confirms the cause. The naive {pp(dec['naive_diff'], sign=True)} therefore mixes a difference in
+who is in each arm with any effect of the gate.</p>
 <h3 id="s6-decomp">6.4 Where does the naive gap come from?</h3>
 <p>The D7 gap splits exactly into three parts (pp of installs). Two of them cannot be the gate (imbalance or chance):
 the different player mix ({pp(dec['composition'], sign=True)}) and the difference among players who never met a gate
@@ -1473,8 +1488,8 @@ the naive gap, which therefore sits where the gate cannot act. The rest, <b>{pp(
 {per10k(eff_ci[1])} more), is <b>the part the gate could explain</b>, not an estimate of the gate's effect. It comes
 from a {pp(b30['abs_lift'], sign=True)} gap among the {pct(w_reach, 0)} of players with {GATE_LEVEL}+ rounds ({c} CI
 {ci_pp(b30['abs_ci_low'], b30['abs_ci_high'])}; {pval(b30['p_value'])}), and players with 15&ndash;{GATE_LEVEL - 1}
-rounds, who never met a gate, show the same {pp(b1529['abs_lift'], sign=True)} gap, so even this part may not be the
-gate.</p>
+rounds, who never met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, {c} CI
+{ci_pp(b1529['abs_ci_low'], b1529['abs_ci_high'])}), so even this part may not be the gate.</p>
 {dec_table}
 {self.fig("gate_decomposition", "light grey bars are the parts of the naive gap that cannot be the gate (imbalance or "
           f"chance); the blue bar, with its {c} CI, is the part the gate could explain, not an estimate of its effect. "
@@ -1492,15 +1507,19 @@ decomposition is descriptive and uses the same unbalanced data.</p>
     f"{GATE_LEVEL} both game versions are identical and rounds &ge; levels, so whether a player ever plays "
     f"{GATE_LEVEL} rounds cannot depend on the gate: it behaves like a trait fixed before treatment. It is an "
     f"approximation: a gate_{GATE_LEVEL} player who cleared every level at the first attempt could meet the gate "
-    f"after {GATE_LEVEL - 1} rounds, which would push in the opposite direction to the observed gaps. That is why "
-    f"the {GATE_LEVEL}+ part is called the part the gate could explain.")}
-<h3>6.5 Guardrails, read where the gate can act</h3>
+    f"after {GATE_LEVEL - 1} rounds. Such players are few: there is no pile-up at {GATE_LEVEL - 1} rounds "
+    f"({num(b29['n_t'])} vs {num(b29['n_c'])} players in gate_40 vs gate_{GATE_LEVEL}), and excluding "
+    f"{GATE_LEVEL - 1}-round players, the 15&ndash;{GATE_LEVEL - 2} band still shows "
+    f"{pp(b1528['abs_lift'], sign=True)} ({c} CI {ci_pp(b1528['abs_ci_low'], b1528['abs_ci_high'])}). The strata are "
+    f"close to, not exactly, gate-free.")}
+<h3>6.5 Guardrails, read among players who could meet the gate</h3>
 {_ul([
     f"<b>D1 retention:</b> the naive {pp(g1['abs_lift'], sign=True)} ({c} CI "
     f"{ci_pp(g1['abs_ci_low'], g1['abs_ci_high'])}; {pval(g1['p_value'])}) carries the same imbalance (player mix "
-    f"{pp(dec1['composition'], sign=True)}). Among players who could meet the gate ({GATE_LEVEL}+ rounds), D1 is "
-    f"{pp(b30_1['abs_lift'], sign=True)} ({c} CI {ci_pp(b30_1['abs_ci_low'], b30_1['abs_ci_high'])}), i.e. no sign "
-    f"of a D1 effect where the gate can act; per install {pp(eff1, sign=True)} ({c} CI {ci_pp(*eff1_ci)}).",
+    f"{pp(dec1['composition'], sign=True)}). The part of the D1 gap the gate could explain is "
+    f"{pp(eff1, sign=True)} per install ({c} CI {ci_pp(*eff1_ci)}): no sign of a D1 effect. It comes from players "
+    f"with {GATE_LEVEL}+ rounds, a diluted group for D1: the gate can change Day 1 only for players who reached level "
+    f"{GATE_LEVEL} on the install day, and the data cannot single them out.",
     f"<b>Rounds played in the first 14 days:</b> the all-player mean difference "
     f"({_signed(rounds['mean_diff'], 2)} rounds, bootstrap {c} CI {_signed(rounds['mean_diff_boot_ci'][0], 1)} to "
     f"{_signed(rounds['mean_diff_boot_ci'][1], 1)}; medians {num(rounds['median_t'])} vs "
@@ -1517,9 +1536,8 @@ decomposition is descriptive and uses the same unbalanced data.</p>
 ])}
 <h3>6.6 Power and what a re-test would take</h3>
 <p>The MDE (D7 {pp(g7['mde']['mde_abs'])}, D1 {pp(g1['mde']['mde_abs'])} at {self.power * 100:.0f}% power, with about
-{num(min(srm['n_t'], srm['n_c']) / 1000)}K players per arm) describes the design; the plausible gate effect is read
-off its own interval ({ci_pp(*eff_ci)} per install for the part the gate could explain), never compared with the
-MDE.</p>
+{num(min(srm['n_t'], srm['n_c']) / 1000)}K players per arm) describes the design; the part the gate could explain is
+read off its own interval ({ci_pp(*eff_ci)} per install), never compared with the MDE.</p>
 <p>A re-test is sized at a change fixed in advance, never at the observed effect. Pre-register the smallest D7 change
 worth acting on: <b>{pp(rt['smallest_d7_change_per_install'], 1)} per install</b>, a placeholder in
 <code>config.yaml</code> to agree with the Game PM (&asymp;{pct(rt['smallest_d7_change_per_install'] / rt['baseline_d7_install'], 1)}
@@ -1527,9 +1545,14 @@ of gate_{GATE_LEVEL}'s {pct(rt['baseline_d7_install'])}). With the primary analy
 {GATE_LEVEL}, pre-registered (membership is settled before the gate), that change is
 {pp(rt['equivalent_change_among_reachers'])} among them on a {pct(rt['baseline_d7_reachers'])} base and needs
 &asymp;{kn(rt['reachers_needed_5050'])} such players, &asymp;{kn(rt['installs_needed_reacher_analysis_5050'])} installs
-at 50/50. Analysed over all installs it needs &asymp;{kn(rt['installs_needed_install_level_5050'])}. Add a daily 50/50
-group-size check. If the true effect is smaller than {pp(rt['smallest_d7_change_per_install'], 1)}, it would not change
-the decision. A re-test only makes sense if the gate position matters commercially.</p>
+at 50/50. Analysed over all installs it needs &asymp;{kn(rt['installs_needed_install_level_5050'])}. Both are sized to
+detect a {pp(rt['smallest_d7_change_per_install'], 1)} drop; a rise of the same size needs a little more
+(&asymp;{kn(rt['installs_needed_install_level_5050_if_rise'])} install-level, &asymp;{pct(rise_inst, 0)} more;
+&asymp;{rt['installs_needed_reacher_analysis_5050_if_rise'] / 1000:,.1f}K for the reacher analysis,
+&asymp;{pct(rise_reach, 1)} more). The reacher figure uses this cohort's {pct(rt['share_reached_30'])} reaching level
+{GATE_LEVEL}; re-check with the new cohort's share before launch. Add a daily 50/50 group-size check. If the true
+effect is smaller than {pp(rt['smallest_d7_change_per_install'], 1)}, it would not change the decision. A re-test only
+makes sense if the gate position matters commercially.</p>
 <div class="decision" id="s6-decision"><div class="decision-label">Decision</div>
 <p><b>Keep the gate at level {GATE_LEVEL}; do not ship gate_40 (R5).</b> Keeping gate_{GATE_LEVEL} is the status quo.
 There is no sign of a retention benefit, and the part of the gap the gate could explain is about
@@ -1538,8 +1561,8 @@ There is no sign of a retention benefit, and the part of the gap the gate could 
 naive {pp(dec['naive_diff'], sign=True)} would overstate the effect. gate_40 does let players who reach level
 {GATE_LEVEL} play a little more (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds), so if the Game PM
 values that, a clean re-test is the way to decide. Fix assignment and logging first (gate_40 received
-&asymp;{num(self.excess_clean)} extra installs, a net {num(lt15)} of them with &lt; 15 rounds), and read any re-test
-only after it passes the daily 50/50 group-size check.</p></div>
+&asymp;{num(self.excess_clean)} extra installs, with a net excess of {num(lt15)} among players with &lt; 15 rounds), and
+read any re-test only after it passes the daily 50/50 group-size check.</p></div>
 </section>"""
 
     # ------------------------------------------------------------------ 7 decision
@@ -1672,9 +1695,9 @@ only after it passes the daily 50/50 group-size check.</p></div>
     "<b>Guardrail events</b>: unsubscribes, ad hides / complaints, uninstalls.",
     "<b>Pre-assignment covariates</b> (prior activity, platform, country, acquisition channel) for balance checks and "
     "variance reduction (CUPED).",
-    "<b>For the game</b>: install dates, platform, country and app version (to explain the extra low-engagement "
-    "gate_40 installs), level-progress and session events (where exactly players stop), and the assignment-service "
-    "logs.",
+    "<b>For the game</b>: install dates, platform, country and app version (to explain gate_40's extra installs and "
+    "their net excess among players with fewer than 15 rounds), level-progress and session events (where exactly "
+    "players stop), and the assignment-service logs.",
 ])}
 </section>"""
 
@@ -1921,14 +1944,18 @@ of D7. The interactive charts are embedded with plotly.js, so the file works off
              "A bigger comparison group means more users miss the ads during the test; logging work for Engineering."),
             ("R5", "Game PM (Engineering + Analytics fix assignment)",
              f"Keep the gate at level {GATE_LEVEL}. Fix how players are assigned and logged first, and re-test only "
-             f"if the gate's position matters commercially (about {users(rt['installs_needed_reacher_analysis_5050'])} "
-             f"installs at 50/50 with the analysis focused on players who reach level {GATE_LEVEL}, about "
-             f"{users(rt['installs_needed_install_level_5050'])} over all installs).",
+             f"if the gate's position matters commercially.",
              f"Avoids a change with no sign of a retention benefit. The part of the day-7 gap the gate could explain "
              f"is about {p100(abs(eff), 1)} points per install (about {per10k(eff)} fewer day-7 players per 10,000 "
              f"installs, possibly none). Level 40 does let players who reach level {GATE_LEVEL} play a little more.",
-             "Engineering closes the assignment investigation with a named cause; any re-test passes the 50/50 "
-             "group-size check before its result is read.",
+             f"Any re-test: agree the smallest day-7 change worth acting on in advance (we suggest "
+             f"{p100(rt['smallest_d7_change_per_install'], 1)} points per install, about "
+             f"{pct(rt['smallest_d7_change_per_install'] / rt['baseline_d7_install'], 1)} of today's "
+             f"{pct(rt['baseline_d7_install'])}); about {users(rt['installs_needed_reacher_analysis_5050'])} installs "
+             f"at 50/50 with the main analysis among players who reach level {GATE_LEVEL} (about "
+             f"{users(rt['reachers_needed_5050'])} of them), about {users(rt['installs_needed_install_level_5050'])} "
+             "over all installs; a daily check that the groups stay 50/50. Engineering closes the assignment "
+             "investigation with a named cause before any re-test is read.",
              f"Quoting the raw {p100(abs(dec['naive_diff']))}-point gap would overstate the effect; a small real effect "
              "could be missed either way."),
             ("R6", "Onboarding PM (with CRM)",
@@ -1960,9 +1987,9 @@ Full analysis: [report.html](report.html) (opens in any browser, works offline).
 ## What we found
 
 1. **The campaign worked.** {pct(t['rate_t'], 2)} of people who saw the ads converted, vs {pct(t['rate_c'], 2)} of a similar group shown a public-service ad instead: {p100(t['abs_lift'])} more conversions per 100 people ({pp(t['abs_lift'], sign=True)}, or {spct(t['rel_lift'])}). We're {c} confident the true increase is between {p100(t['abs_ci_low'])} and {p100(t['abs_ci_high'])} per 100 people. That is roughly {approx(inc['point'], 100)} extra conversions (likely {approx(inc['ci_low'], 100)} to {approx(inc['ci_high'], 100)}) from {bz['impressions_ad_group'] / 1e6:.1f} million ad impressions. Only about {pct(share_inc, 0)} of the ad group's conversions were extra; the rest would have happened anyway. Crediting the campaign with every conversion from people who saw an ad (last-touch) would overstate it about {bz['last_touch_overstatement_x']:.1f} times (likely {self.lt[0]:.1f} to {self.lt[1]:.1f} times).
-2. **Whether doubling the budget pays off is still unknown.** If a conversion is worth {usd(self.value, 0)} (a placeholder; there is no revenue data), the campaign pays for itself as long as 1,000 ad impressions cost less than about {usd(be['point'])} (likely {usd(be['ci_low'])} to {usd(be['ci_high'])}). The {pct(con['share_users_le_20_ads'], 0)} of users who saw ≤ {LOW_EXPOSURE_MAX} ads show no lift we could measure (a lift above {pp(le20['mde_abs'])} would have shown). Almost all the extra conversions ({pct(con['share_incremental_conversions_36_200'], 0)}, counted bucket by bucket) came from the {pct(con['share_ad_users_36_200'], 0)} of ad viewers who saw {heavy} ads. But the people who see the most ads are also the most active and convert more anyway, so this shows where the effect sits, not what extra spend would buy. Only a proper test can answer that. Moving spend to particular days or hours isn't supported either: the one weekday pattern we found reflects users' habits, not a time slot we can buy.
+2. **Whether doubling the budget pays off is still unknown.** If a conversion is worth {usd(self.value, 0)} (a placeholder; there is no revenue data), the campaign pays for itself as long as 1,000 ad impressions cost less than about {usd(be['point'])} (likely {usd(be['ci_low'])} to {usd(be['ci_high'])}). The {pct(con['share_users_le_20_ads'], 0)} of users who saw {LOW_EXPOSURE_MAX} ads or fewer show no lift we could measure (the {c} range runs from {ci_pp(le20['abs_ci_low'], le20['abs_ci_high'], sign=True)}). Almost all the extra conversions ({pct(con['share_incremental_conversions_36_200'], 0)}, counted bucket by bucket) came from the {pct(con['share_ad_users_36_200'], 0)} of ad viewers who saw {heavy} ads. But the people who see the most ads are also the most active and convert more anyway, so this shows where the effect sits, not what extra spend would buy. Only a proper test can answer that. Moving spend to particular days or hours isn't supported either: the one weekday pattern we found reflects users' habits, not a time slot we can buy.
 3. **New players of the game leave early, and the least engaged leave first.** These numbers come from our mobile game (Cookie Cats), the company's other product, so the sizes will not carry over one-for-one to the app. {pct(1 - o['retention_1'])} of new players don't come back the day after installing, and only {pct(o['retention_7'])} play on the seventh day. Almost half ({pct(early['share_of_installs'], 0)}) play fewer than {self.low_cut} rounds in their first two weeks, and only {pct(early['retention_7'])} of them come back on day 7. Players who return on Day 1 are {self.d7_yes / self.d7_no:.1f} times as likely to come back on day 7 ({pct(self.d7_yes)} vs {pct(self.d7_no)}). This shows who leaves, not why.
-4. **Moving the first gate to level 40 shows no sign of a retention benefit; whether it does harm is unclear.** The straightforward comparison shows a lower day-7 return rate with the gate at level 40: {pct(g7['rate_t'])} vs {pct(g7['rate_c'])}. But the two groups weren't split evenly: the level-40 group got about {num(self.excess_clean)} extra installs, and the surplus sits among people who played fewer than 15 rounds; even players who never reached either gate came back slightly less often in that group. About {approx(self.not_gate_share * 100, 10)}% of the gap sits where the gate cannot act. The part the gate itself could explain is about {p100(abs(eff), 1)} percentage points per install (about {per10k(eff)} fewer day-7 players per 10,000 installs), and we're {c} confident it lies between a {p100(abs(eff_ci[0]))}-point drop and a {p100(abs(eff_ci[1]))}-point gain, so it may be zero; even that part may not be the gate. Players who got far enough to meet the gate did play a little more with it at level 40 (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds).
+4. **Moving the first gate to level 40 shows no sign of a retention benefit; whether it does harm is unclear.** The straightforward comparison shows a lower day-7 return rate with the gate at level 40: {pct(g7['rate_t'])} vs {pct(g7['rate_c'])}. But the two groups weren't split evenly: the level-40 group got about {num(self.excess_clean)} extra installs, and the surplus sits among people who played fewer than 15 rounds; even players who played too few rounds to get past the first gate came back slightly less often in that group. About {approx(self.not_gate_share * 100, 10)}% of the gap sits where the gate cannot act. The part the gate itself could explain is about {p100(abs(eff), 1)} percentage points per install (about {per10k(eff)} fewer day-7 players per 10,000 installs), and we're {c} confident it lies between a {p100(abs(eff_ci[0]))}-point drop and a {p100(abs(eff_ci[1]))}-point gain, so it may be zero; even that part may not be the gate. Players who got far enough to meet the gate did play a little more with it at level 40 (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds).
 
 ## What we recommend
 
@@ -1981,9 +2008,10 @@ Full analysis: [report.html](report.html) (opens in any browser, works offline).
 ## Next steps
 
 1. **Finance:** the real value of a conversion and our actual cost per 1,000 impressions (confirms R1).
-2. **Analytics + media buyer:** set up the {pct(hold['share'], 0)} comparison group (R1) and design the more-ads-per-person test (R2).
-3. **Engineering:** find out why the level-40 group received about {num(self.excess_clean)} extra installs, with the surplus among players who played fewer than 15 rounds (R5).
-4. **Onboarding PM + CRM + Analytics:** scope the Day-1 experiment (R6).
+2. **Growth PM + Engineering:** set up the {pct(hold['share'], 0)} comparison group (R1).
+3. **Analytics + media buyer:** design the more-ads-per-person test (R2).
+4. **Engineering:** find out why the level-40 group received about {num(self.excess_clean)} extra installs, with the surplus among players who played fewer than 15 rounds (R5).
+5. **Onboarding PM + CRM + Analytics:** scope the Day-1 experiment (R6).
 """
         return md
 
