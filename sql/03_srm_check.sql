@@ -41,15 +41,19 @@
 --             certify the readout until assignment is explained); PASS otherwise.
 --           - Ad experiment: the intended 96/4 split is not documented; it is
 --             inferred from the observed ratio, and n_treatment is the nearest
---             integer to exactly 96%. Independent random assignment rarely lands
---             that close (prob_exactly_nearest_integer), so the split was most
---             likely set by a quota, or the export was trimmed to it. The SRM test
---             then passes by construction and says nothing about assignment. The
---             meaningful check is exposure parity: avg ads per user by arm in
---             02_conversion_by_group.sql, and each arm's mix across exposure
---             buckets (share_of_arm_*) in 04_lift_by_day_and_hour.sql.
+--             integer to exactly 96%. Independent random assignment typically
+--             misses the target by about sd_users_under_random_assignment and
+--             rarely lands that close (prob_exactly_nearest_integer), so the split
+--             is most likely a fixed quota (or the export was trimmed to it).
+--             Fixed arm sizes are a valid design; they just make the SRM test
+--             uninformative: it passes by construction and says nothing about
+--             assignment. The meaningful check is exposure parity: avg ads per user
+--             by arm in 02_conversion_by_group.sql, and each arm's mix across
+--             exposure buckets (share_of_arm_*) in 04_lift_by_day_and_hour.sql.
 --           - Gate experiment: intended 50/50, tested on raw assignment counts.
---             09_gate_integrity.sql localizes the mismatch by pre-gate stratum.
+--             09_gate_integrity.sql shows where gate_40's net excess of players
+--             sits by rounds band. Those bands were chosen after seeing this
+--             result, so their p-values are descriptive and carry no status.
 --           - With 2 arms, chi2_stat = (deviation_users / sd_users_under_random_assignment)^2:
 --             the test asks how many standard deviations the split is from target.
 --             Exact p-values come from src/stats.py (DuckDB has no chi-square
@@ -140,7 +144,7 @@ SELECT
     END AS srm_status,
     CASE
         WHEN c.is_nearest_integer_to_target
-            THEN 'uninformative: passes by construction (quota-exact split); check exposure parity'
+            THEN 'uninformative: split exactly on target, most likely a quota; check exposure parity'
         WHEN c.chi2_stat > p.chi2_crit_p001
             THEN 'stop: debug assignment before reading any result'
         WHEN c.chi2_stat > p.chi2_crit_p01

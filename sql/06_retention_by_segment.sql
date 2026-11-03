@@ -21,8 +21,8 @@
 --             duckdb -c ".read sql/06_retention_by_segment.sql"         (DuckDB CLI)
 -- Notes   : - DN retention = share of ALL installs in the segment who came back on
 --             day N after install (classic day-N, not rolling; denominator =
---             installs, not survivors). There are no install dates, so the file is
---             a single install cohort, not a series of install-date cohorts.
+--             installs, not survivors). There are no install dates, so the whole
+--             file is one install cohort.
 --           - D7 is not conditional on D1: some players skip day 1 and return on
 --             day 7. Within d1_status, d7_retention_rate compares D7 for Day-1
 --             returners vs non-returners: Day-1 return is the earliest strong signal
@@ -58,7 +58,7 @@ rounds_buckets (rounds_bucket, bucket_order, min_rounds, max_rounds) AS (
         ('100+',  7, 100, 1000000000)
 ),
 
--- Long format: every player appears once per dimension, so one GROUP BY serves every cut
+-- Long format: every player appears once per dimension, so one GROUP BY serves all four
 player_segments AS (
     SELECT
         1             AS dimension_order,

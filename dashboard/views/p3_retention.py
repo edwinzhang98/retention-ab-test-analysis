@@ -16,6 +16,8 @@ from common import (C, F, R, caveat, fmt_pct, how_to_read, load_cache, load_cata
 res = load_results()
 ck = res["cookie"]
 ov = ck["overall"]
+early = ck["early_churn_segment"]          # players with < 15 rounds in 14 days (the R6 target segment)
+r6 = early["onboarding_test_sizing"]
 no_d1 = next(r for r in ck["by_d1_status"] if r["d1_status"] == "Did not return Day 1")
 TK = load_catalog_takeaways()
 
@@ -25,7 +27,6 @@ DIMS = {  # radio label -> (column, axis title, phrase used in chart titles)
     "Experiment version": ("version", "Version", "experiment version"),
 }
 METRICS = {"D1 and D7": ("retention_1", "retention_7"), "D7 only": ("retention_7",), "D1 only": ("retention_1",)}
-LOW_BUCKETS = ("0", "1-4", "5-14")  # fewer than 15 rounds
 FIRST_GATE = 30                     # level of the first progression gate in the control version
 BIN_ROUNDS, BINNED_UP_TO = 5, 150   # retention-by-rounds curve: 5-round bins up to 150, then one open bin
 
@@ -71,16 +72,14 @@ def segment_takeaway(rates: pd.DataFrame, dim: str, metrics: tuple[str, ...]) ->
     if dim == "rounds_bucket":
         text += " Rounds are counted through day 14, so part of this gap is there by construction."
     elif dim == "version":
-        text += " The version gap is not certified: the arms are unbalanced (pages 2 and 6)."
+        text += (" This is the naive gap between unbalanced arms, not the gate's effect and not certified: most of it "
+                 "sits where the gate cannot act (pages 2 and 6).")
     return text
 
 
 # ------------------------------------------------------------------ header + KPIs
 page_header("Retention Analysis", "Which new players leave first, and where is the biggest drop?")
 
-by_rounds = rates_by("rounds_bucket")
-low = by_rounds[by_rounds["rounds_bucket"].astype(str).isin(LOW_BUCKETS)]
-low_share = low["players"].sum() / len(players())
 k = st.columns(4)
 k[0].metric("D1 retention", fmt_pct(ov["retention_1"], 1),
             f"95% CI {fmt_pct(ov['retention_1_ci_low'], 1)} to {fmt_pct(ov['retention_1_ci_high'], 1)}",
@@ -94,11 +93,13 @@ k[1].metric("D7 retention", fmt_pct(ov["retention_7"], 1),
 k[2].metric("Not back on Day 1", fmt_pct(1 - ov["retention_1"], 1),
             f"{no_d1['players']:,} players",
             delta_color="off", delta_arrow="off", help="Installs with no play on the day after install.")
-k[3].metric("Installs with < 15 rounds", fmt_pct(low_share, 0),
-            f"D7 at most {fmt_pct(low['retention_7'].max(), 1)}", delta_color="off", delta_arrow="off",
-            help="Share of installs with 0-14 rounds in their first 14 days, and the highest D7 retention among "
-                 "those three buckets (0, 1-4, 5-14 rounds). Rounds are counted through day 14, so this sizes the "
-                 "early-churn segment; it is not a Day-0 targeting rule.")
+k[3].metric("Installs with < 15 rounds", fmt_pct(early["share_of_installs"], 0),
+            f"only {fmt_pct(early['retention_7'], 1)} back on Day 7", delta_color="off", delta_arrow="off",
+            help=f"Share of installs with 0–14 rounds in their first 14 days ({early['players']:,} players), and "
+                 f"their D7 retention ({fmt_pct(early['retention_7'])}; at most "
+                 f"{fmt_pct(early['max_bucket_retention_7'], 1)} in any single bucket of 0, 1–4 or 5–14 rounds). "
+                 "Rounds are counted through day 14, so this sizes the early-churn segment; it is not a Day-0 "
+                 "targeting rule.")
 
 # ------------------------------------------------------------------ where is the biggest drop?
 st.subheader("Where is the biggest drop?")
@@ -176,7 +177,8 @@ else:
         text += (f" The two versions' curves are never more than {gap.abs().max():.1f} pp apart up to "
                  f"{max_rounds} rounds")
         text += (f"; the largest gap (round {at}) comes before the first gate, where the versions are identical, so "
-                 "it reflects who was assigned to each version (page 2), not the gate." if at < FIRST_GATE else ".")
+                 "it is the assignment imbalance seen as a distribution (page 2), not the gate." if at < FIRST_GATE
+                 else ".")
     takeaway(text)
 
 show(F.fig_retention_by_rounds(R.retention_by_rounds(players(), BINNED_UP_TO, BIN_ROUNDS),
@@ -191,20 +193,25 @@ caveat("Rounds are counted over each player's first 14 days, which overlaps the 
        "that pushing players to play more would keep them. An experiment has to show that.")
 
 st.markdown(
-    f"**What we recommend (R6).** Focus retention work on the first session and Day 1: players with fewer than 15 "
-    f"rounds are {low_share * 100:.0f}% of installs and at most {low['retention_7'].max() * 100:.1f}% of them play "
-    "on Day 7. Day-1 return is the earliest strong signal of who stays, but it is an association: the Onboarding PM "
-    "should validate it with a Day-1 re-engagement experiment aimed at these players, with D7 retention as the "
-    "primary metric, sized with the calculator on page 7.")
+    f"**What we recommend (R6).** Focus retention work on first session → Day 1. Players with fewer than 15 rounds "
+    f"are {early['share_of_installs'] * 100:.0f}% of installs and only {early['retention_7'] * 100:.1f}% of them play "
+    f"on Day 7 (≤ {early['max_bucket_retention_7'] * 100:.1f}% in any single bucket). Day-1 return is the earliest "
+    "strong signal of who stays, but it is an association: the Onboarding PM (with CRM) should test it with a "
+    "randomized Day-1 re-engagement test for new players who play little on their first day, D7 primary. Sizing: "
+    f"+{r6['target_lift_abs'] * 100:.1f} pp D7 on the {early['retention_7'] * 100:.1f}% base (a placeholder target) "
+    f"needs ≈{r6['players_needed_5050'] / 1e3:.0f}K target players "
+    f"(≈{r6['installs_needed_5050'] / 1e3:.0f}K installs) at 50/50; the calculator on page 7 reproduces it. Rounds "
+    "here are counted over 14 days, so the real targeting rule must use first-day play.")
 try:
     st.page_link("views/p7_decision.py", label="Decision & Recommendations", icon=":material/arrow_forward:")
 except StreamlitPageNotFoundError:  # page run on its own, outside the multipage app
     pass
 
 how_to_read(f"""
-**What this page is.** Retention for {int(ov['players']):,} new players of a mobile puzzle game (Cookie Cats): how
-many come back the day after install (**D1**) and on day 7 after install (**D7**), and which kinds of players are
-lost first. The data has no install dates, so all players are treated as one install cohort.
+**What this page is.** Retention for {int(ov['players']):,} new players of the company's mobile game, Cookie Cats
+(2017): how many come back the day after install (**D1**) and on day 7 after install (**D7**), and which kinds of
+players are lost first. The game is a different product from the app the ads ran in, so segment sizes will not
+transfer one-for-one. The data has no install dates, so all players are treated as one install cohort.
 
 **Funnel.** Each bar is the share of all installs that made it to a step. The biggest single drop is between the
 first session and Day 1: {(1 - ov['retention_1']) * 100:.1f}% of new players don't come back on Day 1. The last bar
@@ -216,7 +223,7 @@ and no conclusion depends on it.
 **Gap by dimension.** For three ways of splitting players, the bar is the difference in D7 retention
 between the best and the worst group. A long bar means the split separates stayers from leavers well. Engagement
 depth separates them by far the most, partly by construction (see the note on rounds). The version gap is small next
-to engagement, but large enough to decide the gate question (page 6).
+to engagement, and it is the naive gap between unbalanced arms: most of it sits where the gate cannot act (page 6).
 
 **Segment explorer.** Choose how to split players and which metric to show. Bars are the share retained in each
 group; the thin whiskers are the 95% interval (the plausible range for that group's true rate), and n is the group

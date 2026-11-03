@@ -3,8 +3,8 @@
 Each page is run on its own (dashboard/ and the repo root on sys.path, like
 `streamlit run dashboard/app.py` sets up), must raise no exception, must show the
 key numbers in reports/results.json (and reports/tables/), must recompute its
-output when an interactive control changes, and must not repeat claims the v2
-analysis withdrew. Pages only read the caches in data/processed/ and
+output when an interactive control changes, and must not repeat wording the v2 and
+v3 analysis withdrew. Pages only read the caches in data/processed/ and
 reports/results.json, so build those first (`python run.py --only analysis`).
 
 Run:  .venv/bin/python tests/test_dashboard_a.py      (pytest also collects the test_* functions)
@@ -36,10 +36,13 @@ P1_FIRST_PAINT_MAX = 10.0
 RESULTS = json.loads((ROOT / "reports" / "results.json").read_text())
 AD, CK = RESULTS["ad"], RESULTS["cookie"]
 GATE = CK["gate"]
+EARLY = CK["early_churn_segment"]
+RETEST = GATE["retest_sizing"]
 DAY_TABLE = pd.read_csv(ROOT / "reports" / "tables" / "ad_lift_by_most_ads_day.csv").set_index("most_ads_day")
 
-# Claims and labels the v2 analysis withdrew; none may come back on these pages.
+# Wording the v2 / v3 analysis withdrew; none may come back on these pages (see the v3 brief).
 STALE = {
+    # still withdrawn from v2
     "saturation claim": re.compile(r"saturat", re.I),
     "'8 of 24 hours' argument": re.compile(r"\b8 of 24\b"),
     "post-hoc power": re.compile(r"achieved power|power at the observed effect is \d", re.I),
@@ -47,9 +50,38 @@ STALE = {
     "'370 D7 players' figure": re.compile(r"\b370\b"),
     "status label WARN": re.compile(r"\bWARN\b"),
     "p-value printed as 0": re.compile(r"\bp\s*=\s*0(?:\.0+)?(?!\.?\d)"),
-    "bare dollar sign": re.compile(r"\$"),
+    "bare dollar sign": re.compile(re.escape("\N{DOLLAR SIGN}")),
     "install-date cohorts": re.compile(r"\bcohorts\b", re.I),
+    # v3: gate claims
+    "'worst case' for the best-case bound": re.compile(r"worst[ -]case", re.I),
+    "'no engagement difference'": re.compile(r"no engagement difference", re.I),
+    "'no sign of (any) benefit' (write: no sign of a retention benefit)": re.compile(r"no sign of (?:any|a) benefit",
+                                                                                   re.I),
+    "'best estimate' of the gate effect": re.compile(r"best estimate", re.I),
+    "'explains about 60%' attributed to the extra installs": re.compile(r"explains? (?:about |~|≈)?60\s*%", re.I),
+    "'Every cut points the same way'": re.compile(r"every cut points", re.I),
+    "'762 of the 790' (implies identified players)": re.compile(r"\b762 of (?:the |its )?(?:789|790)\b"),
+    "causal wording on the uncertified gate gap": re.compile(
+        r"costs 0\.8|gate_40 costs?\b|\blowered\b|loses D7 players|lost D7 players", re.I),
+    # v3: re-test / R6 sizing, gate scaling, D1
+    "withdrawn re-test sizes": re.compile(r"276K|276,092|101,852|\b102K\b|102,000"),
+    "R6 sized at 14,250": re.compile(r"14,250"),
+    "'145 per 45K' scaling": re.compile(r"\b145 (?:fewer Day-7 players )?per 45", re.I),
+    "'A D1 drop of up to 1.2 pp'": re.compile(r"D1 drop of up to", re.I),
+    # v3: labels and stale numbers
+    "'6 night hours'": re.compile(r"\b\d+ night hours|night hours have zero", re.I),
+    "'100% at 50/50' (write ≈100%)": re.compile(r"(?<![≈~\d.])100% (?:power )?at 50/50"),
+    "old segment-vs-rest points": re.compile(r"\+0\.92 pp|[−-]0\.76 pp|\+0\.3[23] pp"),
+    # v3: R3, threshold and MDE wording
+    "daypart / time-of-day test as R3": re.compile(r"daypart test|time-of-day test", re.I),
+    "'set by the business before the test'": re.compile(r"set by the business", re.I),
+    "MDE-vs-estimate comparison": re.compile(r"well below (?:that|the MDE)|less than half the D7 MDE|"
+                                             r"not powered to measure", re.I),
+    # v3 persona: the game is the company's other product, not a stand-in
+    "persona: 'not our app' / 'standing in'": re.compile(r"not our app|standing in for our app", re.I),
 }
+# p-value of the gate SRM on cleaned counts: allowed once, as a labelled footnote (page 2)
+CLEANED_P = f"{S.srm_check(GATE['players']['gate_40'], GATE['players']['gate_30'], 0.5)['p_value']:.4f}"
 
 
 # ------------------------------------------------------------------ helpers
@@ -90,15 +122,27 @@ def rendered_text(at: AppTest) -> str:
         parts += [x.value for x in getattr(at, kind)]
     parts += [f"{m.label} {m.value} {m.proto.delta} {m.help or ''}" for m in at.metric]
     parts += [t.value.to_string() for t in at.table] + [d.value.to_string() for d in at.dataframe]
+    parts += [" ".join(map(str, t.value.to_numpy().ravel())) for t in at.table]  # full cells (to_string truncates)
     parts += chart_titles(at) + [e.label for e in at.expander]
     return "\n".join(parts)
 
 
-def assert_no_stale_claims(at: AppTest, where: str, allow: dict[str, int] | None = None) -> None:
-    text = rendered_text(at)
+def flat_text(at: AppTest) -> str:
+    """rendered_text with every run of whitespace collapsed to one space (markdown wraps long sentences)."""
+    return " ".join(rendered_text(at).split())
+
+
+def assert_no_stale_claims(at: AppTest, where: str) -> None:
+    text = flat_text(at)
     for name, rx in STALE.items():
         hits = rx.findall(text)
-        assert len(hits) <= (allow or {}).get(name, 0), f"{where}: stale v1 wording ({name}): {hits}"
+        assert not hits, f"{where}: withdrawn wording ({name}): {hits}"
+
+
+def assert_one_count_basis_per_sentence(at: AppTest, where: str) -> None:
+    """gate_40's excess is 789 in the raw log and 790 after cleaning: never both in one sentence."""
+    for sentence in re.split(r"(?<=[.;])\s+", flat_text(at)):
+        assert not ("789" in sentence and "790" in sentence), f"{where}: two count bases in one sentence: {sentence}"
 
 
 def assert_page_frame(at: AppTest, title: str, question_start: str) -> None:
@@ -109,8 +153,21 @@ def assert_page_frame(at: AppTest, title: str, question_start: str) -> None:
     assert len(takeaways(at)) >= len(at.get("plotly_chart")) > 0, "every chart needs a takeaway"
 
 
+def sgn(x: float, nd: int = 2) -> str:
+    return f"{x:+.{nd}f}".replace("-", "−")
+
+
 def pp(x: float, nd: int = 2) -> str:
-    return f"{x * 100:+.{nd}f} pp"
+    """Signed percentage points with a true minus, as the pages print them: −0.82 pp."""
+    return f"{sgn(x * 100, nd)} pp"
+
+
+def ci(lo: float, hi: float, unit: str = " pp") -> str:
+    return f"95% CI {sgn(lo * 100)} to {sgn(hi * 100)}{unit}"
+
+
+def thousands(n: float) -> str:
+    return f"{n / 1e3:,.0f}K"
 
 
 # ------------------------------------------------------------------ page 1
@@ -121,6 +178,8 @@ def test_p1_overview() -> None:
     assert elapsed < P1_FIRST_PAINT_MAX, f"Overview took {elapsed:.1f}s on a cold start"
     assert_page_frame(at, "Overview", "What did we find")
     assert_no_stale_claims(at, "p1")
+    assert_one_count_basis_per_sentence(at, "p1")
+    text = flat_text(at)
 
     t, bz = AD["test"], AD["business"]
     dec = GATE["d7_decomposition"]
@@ -130,32 +189,63 @@ def test_p1_overview() -> None:
     share = metric_el(at, "Incremental share")
     assert share.value == f"{bz['share_of_ad_conversions_incremental'] * 100:.0f}%"
     assert f"{bz['last_touch_overstatement_x']:.1f}×" in share.proto.delta
+    lt = bz["last_touch_overstatement_ci"]
+    assert f"95% CI {lt[0]:.1f}–{lt[1]:.1f}×" in share.help
     be = bz["breakeven_cpm_usd"]["point"]
     assert metric(at, "Breakeven CPM") == f"USD {be:.2f}"
-    # gate card: the part the gate could cause (not the naive gap), with its CI; the naive gap and the
-    # certification status are spelled out right under the KPI row
-    gate_m = metric_el(at, "gate_40 effect on D7")
-    assert gate_m.value == pp(dec["install_level_effect_if_only_reachers"])
+    # early-churn KPI: 47% of installs, 2.3% back on Day 7 (cookie.early_churn_segment)
+    early_m = metric_el(at, "Installs with < 15 rounds")
+    assert early_m.value == f"{EARLY['share_of_installs'] * 100:.0f}%" == "47%"
+    assert f"{EARLY['retention_7'] * 100:.1f}%" in early_m.proto.delta and "2.3%" in early_m.proto.delta
+    # gate card: the part the gate could explain (not the naive gap), with its CI, not certified
+    gate_m = metric_el(at, "D7 gap the gate could explain")
+    assert gate_m.value == pp(dec["install_level_effect_if_only_reachers"]) == "−0.32 pp"
     lo, hi = dec["install_level_effect_ci_if_only_reachers"]
-    assert gate_m.proto.delta == f"95% CI {lo * 100:+.2f} to {hi * 100:+.2f} pp"
-    assert "Not certified" in gate_m.help
+    assert gate_m.proto.delta == ci(lo, hi) == "95% CI −0.71 to +0.07 pp"
+    srm = GATE["srm"]
+    assert "Not certified" in gate_m.help and "not an estimate of its effect" in gate_m.help
+    assert f"{srm['n_t']:,} vs {srm['n_c']:,}, {srm['n_t'] - srm['n_c']} more in gate_40" in gate_m.help
+    assert srm["n_t"] - srm["n_c"] == GATE["excess_players_raw"] == 789
     assert any(f"naive gap is {pp(dec['naive_diff'])}" in c.value and "Not certified" in c.value
                for c in at.caption)
 
-    text = rendered_text(at)
     badges = [m.value for m in at.markdown if "-badge[" in m.value]
     assert len(badges) == 5, badges
     assert any("keep gate_30" in b and "not certified" in b for b in badges)
-    # Q1: attribution and holdout cost; Q2: heavy users; Q3: day contrasts recomputed live = the committed table
-    assert f"{bz['always_on_holdout_cost']['conversions_forgone']:,.0f} conversions" in text
+    # Q1: incremental conversions in round numbers, attribution with its CI, holdout cost with the as-run 4% arm
+    hold = bz["always_on_holdout_cost"]
+    assert "≈4,300** incremental conversions (95% CI 3,300–5,300)" in text
+    assert f"≈{hold['conversions_forgone']:,.0f} conversions per 588K-user flight" in text
+    assert f"{hold['as_run_control_share'] * 100:.0f}% PSA arm already forgoes " \
+           f"≈{hold['as_run_control_conversions_forgone']:,.0f}" in text
+    assert "most likely a fixed quota" in text
+    # Q2: heavy users
     con = AD["heterogeneity"]["exposure_bucket"]["concentration"]
     assert "lift lives in heavy users" in text and f"{con['share_users_le_20_ads'] * 100:.0f}%" in text
+    assert f"{con['share_incremental_conversions_36_200'] * 100:.0f}%** of the bucket-by-bucket" in text
+    # Q3: day contrasts recomputed live = the committed table (raw differences), with the Tuesday caveat
     for day in AD["heterogeneity"]["most_ads_day"]["segments_differing_holm"]:
         assert f"{day}-peak users {pp(DAY_TABLE.loc[day, 'diff_vs_rest'])}" in text
-    # Q5: raw-count SRM warning and the gate-attributable effect
-    srm = GATE["srm"]
-    assert f"p = {srm['p_value']:.4f}" in text and f"{srm['n_t']:,} vs {srm['n_c']:,}" in text
-    assert srm["status"] == "WARNING" and "**WARNING**" in text
+    assert "Tuesday-peak users +0.95 pp" in text and "Thursday-peak users −0.74 pp" in text
+    tue = DAY_TABLE.loc["Tuesday"]
+    assert f"{int(tue['conv_c'])} conversions among {int(tue['n_c']):,} users, {tue['rate_c'] * 100:.2f}%" in text
+    assert "randomizes the delivery schedule" in text
+    # Q4 / R6: early-churn segment and the onboarding test size
+    r6 = EARLY["onboarding_test_sizing"]
+    assert f"≈{thousands(r6['players_needed_5050'])} target players (≈{thousands(r6['installs_needed_5050'])} " \
+           "installs)" in text
+    # Q5 / R5: ≈790 extra installs, net excess, raw-count WARNING, the part the gate could explain, new re-test size
+    assert f"≈{GATE['best_case_for_gate_40']['excess_players_gate_40']} extra installs" in text
+    assert f"net excess of {GATE['srm_by_stratum']['rounds_lt_15']['net_excess_t']} among players with < 15 " \
+           "rounds" in text
+    assert f"p = {srm['p_value']:.4f}" in text and srm["status"] == "WARNING" and "**WARNING**" in text
+    assert "**−0.32 pp per install** (95% CI −0.71 to +0.07)" in text
+    assert "About 60% of the naive gap sits where the gate cannot act" in text
+    assert "No sign of a retention benefit" in text
+    assert f"≈{thousands(RETEST['installs_needed_reacher_analysis_5050'])} installs at 50/50" in text
+    assert f"≈{thousands(RETEST['reachers_needed_5050'])} of them" in text
+    assert f"≈{thousands(RETEST['installs_needed_install_level_5050'])} if analysed over all installs" in text
+    assert "company's mobile game" in text and "different product" in text
     assert any("Users shown ads converted at" in x for x in takeaways(at))
 
     # interactive: the value-per-conversion assumption drives the breakeven CPM and the holdout cost (linear)
@@ -163,53 +253,79 @@ def test_p1_overview() -> None:
     assert_ok(at, "p1 after value change")
     ratio = 100 / RESULTS["config"]["value_per_conversion_usd"]
     assert metric(at, "Breakeven CPM at USD 100") == f"USD {be * ratio:.2f}"
-    holdout_usd = bz["always_on_holdout_cost"]["value_forgone_usd"] * ratio
-    assert f"USD {holdout_usd / 1e3:,.1f}K at USD 100" in rendered_text(at)
+    holdout_usd = hold["value_forgone_usd"] * ratio
+    assert f"USD {holdout_usd / 1e3:,.1f}K at USD 100" in flat_text(at)
 
 
 # ------------------------------------------------------------------ page 2
 def test_p2_data_sanity() -> None:
     at = run_page("p2_data_sanity.py")
     assert_page_frame(at, "Data & Sanity Checks", "Can we trust the data")
-    # the post-cleaning gate SRM p-value may appear once, as a footnote
     assert_no_stale_claims(at, "p2")
-    assert rendered_text(at).count("0.0085") <= 1
+    assert_one_count_basis_per_sentence(at, "p2")
+    text = flat_text(at)
+    # the post-cleaning gate SRM p-value may appear once, as a labelled footnote
+    assert text.count(CLEANED_P) == 1 and f"Footnote, cleaned counts: without the player it would be p = {CLEANED_P}" \
+        in text
     srm_ad, srm_gate = AD["srm"], GATE["srm"]
 
-    # defaults: the ad split passes but is uninformative (quota-exact); the gate is in the warning band
+    # defaults: the ad split passes but is uninformative (most likely a fixed quota); the gate is in the warning band
     assert srm_ad["status"] == "PASS" and srm_ad["is_nearest_integer_to_target"]
     assert len(at.info) == 1 and "PASS, but uninformative" in at.info[0].value
     for s in (f"{srm_ad['deviation_users']:.2f} off", f"about {srm_ad['sd_users_under_random_assignment']:,.0f}",
-              f"{srm_ad['prob_exactly_nearest_integer'] * 100:.2f}%"):
+              f"{srm_ad['prob_exactly_nearest_integer'] * 100:.2f}%", "most likely set by a fixed quota",
+              "Fixed arm sizes are a valid design"):
         assert s in at.info[0].value, (s, at.info[0].value)
     assert len(at.warning) == 1 and "WARNING" in at.warning[0].value and "gate_40" in at.warning[0].value
     assert len(at.success) == 0 and len(at.error) == 0
     assert [m.value for m in at.metric if m.label == "p-value"] == [f"{srm_ad['p_value']:.4f}",
                                                                     f"{srm_gate['p_value']:.4f}"]
-    counts = next(d.value for d in at.dataframe if "Observed players" in d.value.columns).set_index("Arm")
+    counts = next(d.value for d in at.dataframe
+                  if "Planned" in d.value.columns and "gate_40" in d.value["Arm"].tolist()).set_index("Arm")
     assert counts.loc["gate_40", "Difference"] == f"{srm_gate['n_t'] - srm_gate['expected_t']:+,.2f}"
+    gap_c = srm_gate["n_c"] - srm_gate["expected_c"]
+    assert counts.loc["gate_30", "Difference"] == f"{gap_c:+,.2f}".replace("-", "−")
     gap_sd = (srm_gate["n_t"] - srm_gate["expected_t"]) / S.quota_exactness(
         srm_gate["n_t"], srm_gate["n_c"], srm_gate["intended_share_t"])["sd_users_under_random_assignment"]
     assert f"{gap_sd:.1f} times the typical chance gap" in at.warning[0].value
     assert (srm_gate["n_t"], srm_gate["n_c"]) == (GATE["players_raw"]["gate_40"], GATE["players_raw"]["gate_30"])
 
-    # where is the gate imbalance? one row per stratum, numbers and statuses as in results.json
-    strata = next(d.value for d in at.dataframe if "gate_40 minus gate_30" in d.value.columns).set_index(
-        "Players (by rounds played)")
+    # where is the gate imbalance? post-hoc subsets: counts, net excess, descriptive p, never a PASS/WARNING/FAIL
+    def strata_table() -> pd.DataFrame:
+        return next(d.value for d in at.dataframe if "Net excess" in d.value.columns)
+
+    strata = strata_table().set_index("Players, by rounds in first 14 days")
+    assert "Status" not in strata.columns
     sbs = GATE["srm_by_stratum"]
-    for label, key in (("All players", None), ("Fewer than 30 rounds (never reached level 30)", "rounds_lt_30"),
-                       ("· of which fewer than 15 rounds", "rounds_lt_15"), ("30 rounds or more", "rounds_ge_30")):
+    rows = (("All players", None), ("< 30 rounds (never met a gate)", "rounds_lt_30"),
+            ("· of which < 15 rounds", "rounds_lt_15"), ("· of which 15–29 rounds", "rounds_15_29"),
+            ("30+ rounds (could have reached level 30)", "rounds_ge_30"))
+    assert list(strata.index) == [label for label, _ in rows]
+    for label, key in rows:
         s = srm_gate if key is None else sbs[key]
         row = strata.loc[label]
         assert (row["gate_40"], row["gate_30"]) == (f"{s['n_t']:,}", f"{s['n_c']:,}")
+        assert row["Net excess"] == f"{s['n_t'] - s['n_c']:+,}".replace("-", "−")
+        if key is not None:
+            assert s["net_excess_t"] == s["n_t"] - s["n_c"]
+            assert "chosen after seeing the warning" in row["What the p-value is"]
         assert row["p-value"] == ("< 0.0001" if s["p_value"] < 1e-4 else f"{s['p_value']:.4f}")
-        assert row["Status"] == s["status"], (label, row["Status"], s["status"])
-    assert sbs["rounds_lt_15"]["n_t"] - sbs["rounds_lt_15"]["n_c"] == GATE["excess_players_with_lt_15_rounds"]
+    cells = set(strata.to_numpy().ravel())
+    assert not cells & {"PASS", "WARNING", "FAIL"}, "rounds-band subsets must not carry SRM status labels"
+    assert strata.loc["· of which < 15 rounds", "Net excess"] == "+762"
+    assert strata.loc["· of which 15–29 rounds", "Net excess"] == "+70"
+    assert strata.loc["30+ rounds (could have reached level 30)", "Net excess"] == "−43"
+    assert sbs["rounds_lt_15"]["net_excess_t"] == GATE["excess_players_with_lt_15_rounds"]
+    tk = next(x for x in takeaways(at) if "net excess" in x)
+    assert "the net excess is +762 among players with < 15 rounds" in tk
+    assert "same imbalance seen as a distribution, not independent evidence" in tk
+    assert f"gate_40 has {GATE['excess_players_raw']} more installs than gate_30 in the raw log" in tk
+    assert "chosen after seeing the warning" in text
 
     # data-quality note: zero-round players flagged as back on Day 1 / Day 7
     zero = next(r for r in CK["by_rounds_bucket"] if r["rounds_bucket"] == "0")
     d1, d7 = round(zero["retention_1"] * zero["players"]), round(zero["retention_7"] * zero["players"])
-    assert f"{d1} players with 0 rounds are flagged as back on Day 1 ({d7} on Day 7)" in rendered_text(at)
+    assert f"{d1} players with 0 rounds are flagged as back on Day 1 ({d7} on Day 7)" in text
 
     # interactive 1: a different intended split for the ad arm is recomputed and fails
     at.number_input(key="p2_srm_share_ad").set_value(95.0).run()
@@ -217,13 +333,15 @@ def test_p2_data_sanity() -> None:
     assert len(at.error) == 1 and "FAIL" in at.error[0].value and len(at.info) == 0
     assert [m.value for m in at.metric if m.label == "p-value"][0] == "< 0.0001"
 
-    # interactive 2: a looser threshold turns the gate warning into a failure, in the panel and the strata table
+    # interactive 2: a looser threshold turns the gate warning into a failure in the panel; the band table stays
+    # descriptive (same rows, still no status labels)
+    before = strata_table()
     at.number_input(key="p2_srm_share_ad").set_value(96.0)
     at.radio(key="p2_srm_threshold").set_value(0.01).run()
     assert_ok(at, "p2 after threshold change")
     assert len(at.warning) == 0 and len(at.error) == 1 and "gate_40" in at.error[0].value
-    strata = next(d.value for d in at.dataframe if "gate_40 minus gate_30" in d.value.columns)
-    assert strata["Status"].tolist() == ["FAIL", "FAIL", "FAIL", "PASS"]
+    after = strata_table()
+    assert after.equals(before) and not set(after.to_numpy().ravel()) & {"PASS", "WARNING", "FAIL"}
 
     # interactive 3: the balance chart and its statistics follow the selected field (default: exposure parity)
     expo = next(b for b in AD["balance"] if b["variable"] == "exposure_bucket")
@@ -245,12 +363,27 @@ def test_p3_retention() -> None:
     assert_no_stale_claims(at, "p3")
     assert metric(at, "D7 retention") == f"{CK['overall']['retention_7'] * 100:.1f}%"
     assert metric(at, "Not back on Day 1") == f"{(1 - CK['overall']['retention_1']) * 100:.1f}%"
+    early_m = metric_el(at, "Installs with < 15 rounds")
+    assert early_m.value == f"{EARLY['share_of_installs'] * 100:.0f}%"
+    assert early_m.proto.delta == f"only {EARLY['retention_7'] * 100:.1f}% back on Day 7" == "only 2.3% back on Day 7"
+    assert f"at most {EARLY['max_bucket_retention_7'] * 100:.1f}%" in early_m.help
     default_tk = takeaways(at)
-    assert any("Players with < 15 rounds" in x and "not a Day-0 targeting rule" in x for x in default_tk)
+    assert any("Players with < 15 rounds" in x and "2.3%" in x and "not a Day-0 targeting rule" in x
+               for x in default_tk)
     median = int(RESULTS["data_quality"]["cookie"]["rounds_p50"])
     assert any(f"Half of players play {median} rounds or fewer" in x for x in default_tk)
-    text = rendered_text(at)
+    text = flat_text(at)
     assert "partly definitional" in text and "small next to engagement" in text and "one install cohort" in text
+    # persona: the company's mobile game, a different product (not a stand-in)
+    assert "the company's mobile game" in text and "different product from the app the ads ran in" in text
+    # R6: the early-churn segment and the onboarding test size
+    r6 = EARLY["onboarding_test_sizing"]
+    assert f"only {EARLY['retention_7'] * 100:.1f}% of them play on Day 7" in text
+    assert f"≈{thousands(r6['players_needed_5050'])} target players (≈{thousands(r6['installs_needed_5050'])} " \
+           "installs) at 50/50" in text
+    # nothing reads the version gap as the gate's causal effect on D7
+    assert not re.search(r"(?:gate|version)[^.]{0,60}\b(?:moves?|lowers?|reduces?|cuts?|costs?|caused?)\b[^.]{0,30}D7",
+                         text, re.I)
 
     # interactive 1: live segmentation by experiment version, D7 only
     at.radio(key="p3_dimension").set_value("Experiment version")
@@ -261,8 +394,9 @@ def test_p3_retention() -> None:
     by_version = {r["version"]: r["retention_7"] for r in CK["by_version"]}
     seg_tk = next(x for x in takeaways(at) if "D7 retention ranges from" in x)
     assert f"{min(by_version.values()) * 100:.1f}%" in seg_tk and f"{max(by_version.values()) * 100:.1f}%" in seg_tk
-    assert "not certified" in seg_tk
+    assert "not certified" in seg_tk and "not the gate's effect" in seg_tk
     assert takeaways(at) != default_tk
+    assert_no_stale_claims(at, "p3 (version split)")
 
     # interactive 2: Day-1 status hides the trivially 0% / 100% D1 bars
     at.radio(key="p3_dimension").set_value("Came back on Day 1")
@@ -283,31 +417,72 @@ def test_p3_retention() -> None:
     assert_ok(at, "p3 after version split")
     curve_tk = next(x for x in takeaways(at) if "versions' curves" in x)
     assert "before the first gate" in curve_tk and "reach round 100" in curve_tk
+    assert "imbalance seen as a distribution" in curve_tk and "not the gate" in curve_tk
 
 
 # ------------------------------------------------------------------ page 7
+CANONICAL_OWNERS = ["Growth PM", "Growth PM + media buyer", "Media buyer", "Analytics + Eng",
+                    "Game PM (Eng + Analytics fix assignment)", "Onboarding PM (with CRM)"]
+
+
 def test_p7_decision() -> None:
     at = run_page("p7_decision.py")
     assert_page_frame(at, "Decision & Recommendations", "What should we do")
     assert_no_stale_claims(at, "p7")
+    assert_one_count_basis_per_sentence(at, "p7")
 
     badges = [m.value for m in at.markdown if "-badge[" in m.value]
     assert [b.split("[", 1)[1].rstrip("]") for b in badges] == ["KEEP", "TEST FIRST", "DON'T (YET)", "TEST",
                                                                "DON'T SHIP"]
+    text = flat_text(at)
+    assert "No sign of a retention benefit" in text and "not an estimate of its effect" in text
+
+    # canonical R1-R6: owners, and the numbers in each row from results.json
     recs = at.table[0].value
     assert list(recs.index) == [f"R{i}" for i in range(1, 7)]
-    assert list(recs.columns) == ["Who", "What", "Expected impact", "How to measure", "Risk"]
-    assert (recs["Who"].str.len() > 0).all()
-    assert (recs.drop(columns="Who").map(len) > 30).all().all(), "every recommendation needs all five fields"
-    r1, r4, r5 = (" ".join(recs.loc[r]) for r in ("R1", "R4", "R5"))
-    bz, pw, dec, retest = AD["business"], AD["power"], GATE["d7_decomposition"], GATE["retest_sizing"]
-    assert f"{bz['always_on_holdout_cost']['conversions_forgone']:,.0f} conversions" in r1
-    assert f"{bz['last_touch_overstatement_x']:.1f}×" in r1
-    assert f"{pw['power_at_relative_lift']['0.1']['power_current_split'] * 100:.0f}% power" in r4
-    assert pp(dec["install_level_effect_if_only_reachers"]) in r5 and "Not certified" in r5
-    assert f"{retest['installs_needed_total_5050']:,} installs" in r5
+    assert list(recs.columns) == ["Owner", "What", "Expected impact", "How we'll measure", "Main risk"]
+    assert recs["Owner"].tolist() == CANONICAL_OWNERS
+    assert (recs.drop(columns="Owner").map(len) > 30).all().all(), "every recommendation needs all five fields"
+    r1, r2, r3, r4, r5, r6 = (" ".join(recs.loc[r]) for r in ("R1", "R2", "R3", "R4", "R5", "R6"))
+    bz, pw, dec = AD["business"], AD["power"], GATE["d7_decomposition"]
+    hold, be, lt = bz["always_on_holdout_cost"], bz["breakeven_cpm_usd"], bz["last_touch_overstatement_ci"]
+    assert "≈4,300 incremental conversions per comparable flight (95% CI 3,300–5,300)" in r1
+    assert f"≈{hold['conversions_forgone']:,.0f} conversions per 588K-user flight " \
+           f"(≈USD {hold['value_forgone_usd'] / 1e3:.1f}K at USD 50)" in r1
+    assert f"{hold['as_run_control_share'] * 100:.0f}% PSA arm already forgoes " \
+           f"≈{hold['as_run_control_conversions_forgone']:,.0f}" in r1
+    assert f"{bz['last_touch_overstatement_x']:.1f}× (95% CI {lt[0]:.1f}–{lt[1]:.1f}×)" in r1
+    assert f"CPM < USD {be['point']:.2f} (USD {be['ci_low']:.2f} at the pessimistic end)" in r1
+    con = AD["heterogeneity"]["exposure_bucket"]["concentration"]
+    assert f"{con['share_ad_users_36_200'] * 100:.0f}% of ad users who saw 36–200 ads" in r2
+    assert f"{thousands(pw['total_n_for_10pct_rel_lift']['0.5'])} users (50/50)" in r2
+    assert "randomizes the delivery schedule" in r3 and recs.loc["R3", "Main risk"] == \
+        "Missing a small real timing effect."
+    ses = pw["power_at_relative_lift"]["0.1"]
+    assert f"96/4 had {ses['power_current_split'] * 100:.0f}% power" in r4
+    assert ses["power_5050_same_total"] >= 0.995 and "≈100% power" in r4
+    assert f"MDE of {pw['mde_if_5050_same_total']['mde_abs'] * 100:.2f} pp instead of " \
+           f"{pw['mde_current']['mde_abs'] * 100:.2f} pp" in r4
+    lo, hi = dec["install_level_effect_ci_if_only_reachers"]
+    assert f"≈{sgn(dec['install_level_effect_if_only_reachers'] * 100, 1)} pp per install " \
+           f"({ci(lo, hi, unit='')}; ≈{abs(dec['install_level_effect_if_only_reachers']) * 1e4:.0f} fewer Day-7 " \
+           "players per 10,000 installs)" in r5
+    rr = GATE["rounds_among_reachers"]
+    assert f"median {rr['median_t']:.0f} vs. {rr['median_c']:.0f} rounds" in r5
+    assert f"{RETEST['smallest_d7_change_per_install'] * 100:.1f} pp D7 change per install" in r5
+    assert f"≈{thousands(RETEST['installs_needed_reacher_analysis_5050'])} installs at 50/50" in r5
+    assert f"≈{thousands(RETEST['reachers_needed_5050'])} of them" in r5
+    assert f"≈{thousands(RETEST['installs_needed_install_level_5050'])} if analysed over all installs" in r5
+    assert f"Quoting the raw {pp(dec['naive_diff'])}" in r5
+    r6s = EARLY["onboarding_test_sizing"]
+    assert f"{EARLY['share_of_installs'] * 100:.0f}% play < 15 rounds and only {EARLY['retention_7'] * 100:.1f}%" in r6
+    gap = EARLY["d7_if_returned_day1"] - EARLY["d7_if_not_returned_day1"]
+    assert f"≈{gap:.2f} pp of D7 ({EARLY['d7_if_returned_day1'] * 100:.1f}% vs. " \
+           f"{EARLY['d7_if_not_returned_day1'] * 100:.1f}%)" in r6
+    assert f"≈{thousands(r6s['players_needed_5050'])} target players (≈{thousands(r6s['installs_needed_5050'])} " \
+           "installs) at 50/50" in r6
 
-    # the calculator's defaults reproduce the power numbers in results.json (same src.stats function)
+    # the calculator's defaults (ad test) reproduce the power numbers in results.json (same src.stats function)
     n10 = pw["total_n_for_10pct_rel_lift"]
     assert metric(at, "Total users needed") == f"{n10['0.5']:,}"
     assert metric(at, "Entrants needed") == f"{n10['0.5']:,}"   # everyone reaches an ad test's change
@@ -319,37 +494,47 @@ def test_p7_decision() -> None:
     at.slider(key="p7_share").set_value(80).run()
     assert metric(at, "Total users needed") == f"{n10['0.8']:,}"
 
-    # interactive 2: a larger MDE needs fewer users; duration follows the daily traffic entered
+    # interactive 2: a larger change needs fewer users; duration follows the daily traffic entered
     before_n = int(metric(at, "Total users needed").replace(",", ""))
-    at.number_input(key="p7_rel_mde").set_value(20.0)
+    at.number_input(key="p7_change").set_value(0.4)
     at.number_input(key="p7_daily").set_value(5_000).run()
-    assert_ok(at, "p7 after MDE change")
+    assert_ok(at, "p7 after change edit")
     total = int(metric(at, "Total users needed").replace(",", ""))
     assert total < before_n
     assert metric(at, "Days at 5,000 entrants/day") == f"{math.ceil(total / 5_000):,}"
 
-    # interactive 3: the D7 preset switches the baseline (and resets the split)
-    at.radio(key="p7_preset").set_value("Onboarding test: D7 retention").run()
-    assert_ok(at, "p7 after preset change")
-    assert abs(at.number_input(key="p7_baseline").value - CK["overall"]["retention_7"] * 100) < 0.01
+    # interactive 3: the onboarding preset (R6) reproduces cookie.early_churn_segment.onboarding_test_sizing
+    at.radio(key="p7_preset").set_value("Onboarding test (R6)").run()
+    assert_ok(at, "p7 after onboarding preset")
+    assert abs(at.number_input(key="p7_baseline").value - EARLY["retention_7"] * 100) < 1e-9
+    assert abs(at.number_input(key="p7_change").value - RESULTS["config"]["onboarding_target_lift"] * 100) < 1e-9
+    assert abs(at.number_input(key="p7_reach").value - EARLY["share_of_installs"] * 100) < 1e-9
     assert at.slider(key="p7_share").value == 50
+    assert metric(at, "Total users needed") == f"{r6s['players_needed_5050']:,}" == "30,809"
+    assert metric(at, "Entrants needed") == f"{r6s['installs_needed_5050']:,}" == "65,648"
+    assert any("Onboarding test (R6)" in c.value and "30,809 target players ≈ 65,648 installs" in c.value
+               for c in at.caption)
 
-    # interactive 4: the gate re-test preset reproduces results.json's re-test sizing (a drop, partial reach)
-    at.radio(key="p7_preset").set_value("Gate re-test: D7 of players who reach level 30").run()
+    # interactive 4: the gate re-test preset (R5) reproduces cookie.gate.retest_sizing (a drop, partial reach)
+    at.radio(key="p7_preset").set_value("Gate re-test (R5)").run()
     assert_ok(at, "p7 after gate preset")
     assert not at.warning
-    assert metric(at, "Total users needed") == f"{retest['reachers_needed_total_5050']:,}"
-    assert metric(at, "Entrants needed") == f"{retest['installs_needed_total_5050']:,}"
-    assert metric(at, "Effect to detect") == pp(retest["target_effect_reachers"])
+    assert abs(at.number_input(key="p7_change").value + RETEST["equivalent_change_among_reachers"] * 100) < 1e-9
+    assert metric(at, "Total users needed") == f"{RETEST['reachers_needed_5050']:,}" == "41,933"
+    assert metric(at, "Entrants needed") == f"{RETEST['installs_needed_reacher_analysis_5050']:,}" == "113,669"
+    assert metric(at, "Change to detect") == f"{sgn(-RETEST['equivalent_change_among_reachers'] * 100)} pp"
+    assert any("Gate re-test (R5)" in c.value and f"{RETEST['installs_needed_install_level_5050']:,} installs"
+               in c.value and "never at the observed gap" in c.value for c in at.caption)
     assert "drop" in json.loads(at.get("plotly_chart")[0].proto.spec)["layout"]["xaxis"]["title"]["text"]
+    assert_no_stale_claims(at, "p7 (gate preset)")
 
-    # interactive 5: any relative change, checked against src.stats directly; zero is refused
-    at.number_input(key="p7_rel_mde").set_value(-5.0).run()
+    # interactive 5: any change, checked against src.stats directly; zero is refused
+    at.number_input(key="p7_change").set_value(-2.0).run()
     assert_ok(at, "p7 after negative change")
     base = at.number_input(key="p7_baseline").value / 100
-    expected = S.required_total_n(base, base * -0.05, 0.5, 0.05, 0.8)
+    expected = S.required_total_n(base, -0.02, 0.5, 0.05, 0.8)
     assert metric(at, "Total users needed") == f"{expected:,}"
-    at.number_input(key="p7_rel_mde").set_value(0.0).run()
+    at.number_input(key="p7_change").set_value(0.0).run()
     assert_ok(at, "p7 after zero change")
     assert len(at.warning) == 1 and "non-zero" in at.warning[0].value
 
@@ -357,6 +542,8 @@ def test_p7_decision() -> None:
 # ------------------------------------------------------------------ inside the multipage app
 def test_pages_inside_app() -> None:
     """Run app.py and switch to each of these pages (needs every page file app.py registers)."""
+    src = (DASH / "app.py").read_text()
+    assert 'initial_sidebar_state="auto"' in src, "the sidebar should collapse on phones and stay open on desktop"
     views = DASH / "views"
     required = ["p1_overview.py", "p2_data_sanity.py", "p3_retention.py", "p4_experiment_readout.py",
                 "p5_heterogeneity.py", "p6_gate_experiment.py", "p7_decision.py"]

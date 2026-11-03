@@ -89,6 +89,42 @@ def fmt_pct(x: float, nd: int = 2) -> str:
     return f"{x * 100:.{nd}f}%"
 
 
+# ------------------------------------------------------------------ prose formatting (true minus "−")
+def sgn(x: float, nd: int = 2) -> str:
+    """Always signed, with a true minus for prose: +0.77 / −0.82 (fmt_pp keeps the hyphen-minus)."""
+    return f"{x:+.{nd}f}".replace("-", "−")
+
+
+def num(x: float, nd: int = 2) -> str:
+    """Fixed decimals, true minus for negatives, no plus sign: 0.59 / −1.33."""
+    return f"{x:.{nd}f}".replace("-", "−")
+
+
+def sgn_pp(x: float, nd: int = 2) -> str:
+    """A proportion as signed percentage points with a true minus: -0.0082 -> '−0.82 pp'."""
+    return f"{sgn(x * 100, nd)} pp"
+
+
+def ci_text(lo: float, hi: float, nd: int = 2, signed: bool = True, unit: str = " pp") -> str:
+    """'95% CI −0.71 to +0.07 pp' from two proportions (x 100); signed=False drops the plus signs."""
+    f = sgn if signed else num
+    return f"95% CI {f(lo * 100, nd)} to {f(hi * 100, nd)}{unit}"
+
+
+def p_text(p: float) -> str:
+    """p-value for sentences: two significant digits ('p = 0.0086', 'p = 0.18'); never a zero p-value."""
+    if p < 1e-4:
+        return "p < 0.0001"
+    if p < 1e-3 or p >= 0.995:
+        return f"p = {p:.4f}"
+    return f"p = {p:.2g}"
+
+
+def approx(x: float, to: int = 100) -> str:
+    """Rounded count for prose: 4342.98 -> '4,300' (prefix '≈' at the call site)."""
+    return f"{round(x / to) * to:,.0f}"
+
+
 CSS = """
 <style>
   .block-container {padding-top: 2.2rem; max-width: 1200px;}
@@ -101,6 +137,9 @@ CSS = """
            margin:.4rem 0 1rem 0;}
   div[data-testid="stMetric"] {background:#fafaf9; border:1px solid #ecebe7; border-radius:6px;
                                padding:.6rem .8rem;}
+  @media (max-width: 640px) {
+    [data-testid="stMarkdownContainer"] table {display:block; overflow-x:auto; max-width:100%;}
+  }
 </style>
 """
 

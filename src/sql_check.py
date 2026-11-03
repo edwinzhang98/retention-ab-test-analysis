@@ -8,17 +8,19 @@ outputs with reports/results.json, reports/tables/*.csv and a pandas
 re-computation from src.data. SQL and pandas are two independent implementations
 of the same metric definitions, so agreement is evidence that both are right.
 
-DuckDB has no normal or chi-square CDF, so the SQL stops at test statistics. For
-the heterogeneity decisions, this module turns the SQL z statistics into p-values,
-applies the same multiple-comparison corrections as the pipeline (src.stats) and
-checks that the resulting counts match results.json.
+DuckDB has no normal or chi-square CDF, so the SQL stops at test statistics. This
+module turns the SQL z statistics into two-sided p-values: for the heterogeneity
+decisions it then applies the same multiple-comparison corrections as the pipeline
+(src.stats) and checks that the resulting counts match results.json; for the gate
+integrity checks (sql/09) it compares the p-values with results.json directly.
 
 Output
   reports/tables/sql_reconciliation.csv, one row per check:
     check, sql_value, python_value, abs_diff, match, tolerance, sql_file, python_source
-  Numbers must agree within the tolerance; labels (statuses, segment names) must
-  agree exactly. Raises ReconciliationError (after writing the CSV) if any check
-  fails, and before that if a SQL file has no reconciler or a reconciled file is missing.
+  Numbers must agree within the tolerance; labels (statuses, segment names, row
+  keys) must agree exactly. Raises ReconciliationError (after writing the CSV) if any
+  check fails, and before that if a SQL file has no reconciler or a reconciled file
+  is missing.
 
 Usage, from the repo root
   python -m src.sql_check                                  run every file + reconcile
@@ -48,12 +50,14 @@ from . import stats as S
 SQL_DIR = C.ROOT / "sql"
 RECON_CSV = C.TABLES_DIR / "sql_reconciliation.csv"
 
-# Tolerances. results.json stores floats rounded to 6 decimals (src.analysis._r),
+# Tolerances. results.json stores floats rounded to 8 decimals (src.analysis._r),
 # so a value read from it can differ from the full-precision SQL value by up to
-# half a unit in the 6th decimal. reports/tables/*.csv and pandas re-computations
-# are full precision. Counts, flags and labels must match exactly.
+# half a unit in the 8th decimal. Values below 1e-4 in size are stored with 3
+# significant digits instead, so for them TOL_JSON widens to 0.5% of the value
+# (_json_tol). reports/tables/*.csv and pandas re-computations are full precision.
+# Counts, flags and labels must match exactly.
 TOL_EXACT = 0.0
-TOL_JSON = 5e-7 + 1e-9
+TOL_JSON = 5e-9 + 1e-12
 TOL_FULL = 1e-9
 
 # Python result tables used for segment-level checks, with their segment column
@@ -74,14 +78,70 @@ LIGHT_BUCKETS = ["1-5", "6-10", "11-20"]       # 20 ads or fewer
 HEAVY_BUCKETS = ["36-50", "51-100", "101-200"]
 # Same minimum segment size as src.retention.gap_by_dimension
 GAP_MIN_PLAYERS = 500
-# Rows of sql/09_gate_integrity.sql: (stratum, key in cookie.gate.srm_by_stratum,
-# key in cookie.gate.negative_control and d7_decomposition.detail)
-GATE_STRATA = (
-    ("All players", None, None),
-    ("Rounds < 15", "rounds_lt_15", None),
-    ("Rounds < 30", "rounds_lt_30", "never_reached_30"),
-    ("Rounds >= 30", "rounds_ge_30", "reached_30"),
+# Rounds buckets that make up the early-churn segment (< 15 rounds), as in src.analysis.cookie_analysis
+EARLY_CHURN_BUCKETS = ["0", "1-4", "5-14"]
+
+# sql/03_srm_check.sql 'reading' for each SRM outcome (a quota-exact split overrides the status)
+SRM_READINGS = {
+    "quota": "uninformative: split exactly on target, most likely a quota; check exposure parity",
+    "FAIL": "stop: debug assignment before reading any result",
+    "WARNING": "do not certify the readout until the mismatch is explained",
+    "PASS": "consistent with the intended split",
+}
+
+# sql/08_data_quality_checks.sql: the DQ log's status words (docs/03_data_quality_checks.md), and the
+# checks whose rule is 'WARNING if > 0'
+DQ_STATUS_WORDS = ("PASS", "WARNING", "FAIL", "INFO")
+DQ_WARNING_IF_POSITIVE = (("cookie_cats", "zero_round_players_flagged_d1"),
+                          ("cookie_cats", "zero_round_players_flagged_d7"),
+                          ("cookie_cats", "players_over_10000_rounds"))
+
+# sql/09_gate_integrity.sql. Rounds bands: (population, key in cookie.gate.srm_by_stratum (None = the
+# overall srm), paths in cookie.gate to the band's two-proportion results by version). 'Rounds >= 30' is
+# stored twice in results.json, so both copies are checked.
+GATE_BANDS = (
+    ("All players", None, ((),)),
+    ("Rounds < 15", "rounds_lt_15", (("retention_by_rounds_band", "rounds_lt_15"),)),
+    ("Rounds 15-29", "rounds_15_29", (("retention_by_rounds_band", "rounds_15_29"),)),
+    ("Rounds < 30", "rounds_lt_30", (("negative_control", "never_reached_30"),)),
+    ("Rounds >= 30", "rounds_ge_30", (("retention_by_rounds_band", "rounds_ge_30"),
+                                      ("negative_control", "reached_30"))),
 )
+# The two bands that split every player once (decomposition), with their key in *_decomposition.detail
+GATE_PARTITION = (("Rounds < 30", "never_reached_30"), ("Rounds >= 30", "reached_30"))
+# Drill-down bands inside rounds < 30, with their inclusive round bounds (for the pandas share check)
+GATE_DRILL_DOWN = (("Rounds < 15", 0, 14), ("Rounds 15-29", 15, 29))
+# Every row of sql/09_gate_integrity.sql in output order: (section, population, measure)
+GATE_ROWS = (
+    *(("assignment", band, "assigned players") for band, _, _ in GATE_BANDS),
+    *(("retention", band, "D7") for band in ("All players", "Rounds < 15", "Rounds 15-29", "Rounds < 30")),
+    ("retention", "Rounds < 30, net excess removed", "D7"),
+    ("retention", "Rounds >= 30", "D7"),
+    *(("retention", band, "D1") for band, _, _ in GATE_BANDS),
+    ("best case for gate_40", "All players, extra installs removed", "D7"),
+    ("play", "All players", "pre-gate rounds (capped at 29), mean"),
+    ("play", "Rounds >= 30", "rounds, median"),
+    ("play", "Rounds >= 30", "rounds, mean"),
+    ("play", "Rounds >= 30", "share with 40+ rounds"),
+    ("re-test sizing", "All players", "D7 change to detect"),
+    ("re-test sizing", "Rounds >= 30", "D7 change to detect"),
+)
+# A two-proportion row of sql/09 vs a src.stats.two_prop_test result in results.json:
+# (check, SQL column, results.json key, tolerance). The p-value is checked separately (from z_stat).
+GATE_TWO_PROP = (
+    ("players gate_40", "n_gate_40", "n_t", TOL_EXACT),
+    ("players gate_30", "n_gate_30", "n_c", TOL_EXACT),
+    ("with the outcome gate_40", "k_gate_40", "conv_t", TOL_EXACT),
+    ("with the outcome gate_30", "k_gate_30", "conv_c", TOL_EXACT),
+    ("rate gate_40", "value_gate_40", "rate_t", TOL_JSON),
+    ("rate gate_30", "value_gate_30", "rate_c", TOL_JSON),
+    ("difference (gate_40 - gate_30)", "difference", "abs_lift", TOL_JSON),
+    ("pooled z statistic", "z_stat", "z", TOL_JSON),
+    ("95% CI low (Newcombe)", "ci95_low", "abs_ci_low", TOL_JSON),
+    ("95% CI high (Newcombe)", "ci95_high", "abs_ci_high", TOL_JSON),
+)
+# SRM status words that must never label the post-hoc rounds bands in sql/09
+SRM_STATUS_WORDS = ("PASS", "WARNING", "FAIL")
 
 
 class ReconciliationError(RuntimeError):
@@ -163,12 +223,33 @@ def _p_from_z(z) -> np.ndarray:
     return 2 * sps.norm.sf(np.abs(np.asarray(z, dtype=float)))
 
 
+def _p1(z) -> float:
+    """Two-sided normal p-value for one SQL z statistic."""
+    return float(_p_from_z(z))
+
+
+def _json_tol(value) -> float:
+    """TOL_JSON for one results.json value: src.analysis._r keeps values below 1e-4 in size
+    to 3 significant digits instead of 8 decimals, a rounding error of up to 0.5% of the value."""
+    v = abs(_to_float(value))
+    return max(TOL_JSON, 0.005 * v) if 0 < v <= 1e-4 else TOL_JSON
+
+
+def _dig(d: dict, path: str):
+    """d['a']['b'] for path 'a.b'."""
+    for k in path.split("."):
+        d = d[k]
+    return d
+
+
 class _Checks:
     def __init__(self) -> None:
         self.rows: list[dict] = []
 
     def add(self, check: str, sql_file: str, sql_value, python_source: str, python_value,
             tol: float = TOL_EXACT) -> None:
+        if tol == TOL_JSON:
+            tol = _json_tol(python_value)
         if isinstance(sql_value, str) or isinstance(python_value, str):
             ok = str(sql_value) == str(python_value)  # labels: exact text match
             diff = 0.0 if ok else math.nan
@@ -247,6 +328,9 @@ def _conversion(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ("conversion rate (psa)", "conversion_rate_psa", "test.rate_c", t["rate_c"], TOL_JSON),
         ("absolute lift", "abs_lift", "test.abs_lift", t["abs_lift"], TOL_JSON),
         ("relative lift", "rel_lift", "test.rel_lift", t["rel_lift"], TOL_JSON),
+        ("relative lift 95% CI low (log risk ratio)", "rel_lift_ci95_low", "test.rel_ci_low", t["rel_ci_low"], TOL_JSON),
+        ("relative lift 95% CI high (log risk ratio)", "rel_lift_ci95_high", "test.rel_ci_high", t["rel_ci_high"],
+         TOL_JSON),
         ("pooled z statistic", "z_stat", "test.z", t["z"], TOL_JSON),
         ("95% Wald CI low", "abs_lift_ci95_low", "wald_ci[0]", a["wald_ci"][0], TOL_JSON),
         ("95% Wald CI high", "abs_lift_ci95_high", "wald_ci[1]", a["wald_ci"][1], TOL_JSON),
@@ -258,8 +342,16 @@ def _conversion(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
          b["incremental_conversions"]["point"], TOL_JSON),
         ("incremental share of ad conversions", "incremental_share_of_ad_conversions",
          "business.share_of_ad_conversions_incremental", b["share_of_ad_conversions_incremental"], TOL_JSON),
+        ("incremental share, 95% CI low", "incremental_share_ci95_low",
+         "business.share_of_ad_conversions_incremental_ci[0]", b["share_of_ad_conversions_incremental_ci"][0], TOL_JSON),
+        ("incremental share, 95% CI high", "incremental_share_ci95_high",
+         "business.share_of_ad_conversions_incremental_ci[1]", b["share_of_ad_conversions_incremental_ci"][1], TOL_JSON),
         ("last-touch overstatement (x)", "last_touch_overstatement_x", "business.last_touch_overstatement_x",
          b["last_touch_overstatement_x"], TOL_JSON),
+        ("last-touch overstatement, 95% CI low (x)", "last_touch_overstatement_ci95_low",
+         "business.last_touch_overstatement_ci[0]", b["last_touch_overstatement_ci"][0], TOL_JSON),
+        ("last-touch overstatement, 95% CI high (x)", "last_touch_overstatement_ci95_high",
+         "business.last_touch_overstatement_ci[1]", b["last_touch_overstatement_ci"][1], TOL_JSON),
         ("breakeven CPM in USD (assumed value per conversion)", "breakeven_cpm_usd", "business.breakeven_cpm_usd.point",
          b["breakeven_cpm_usd"]["point"], TOL_JSON),
         ("always-on holdout: users", "holdout_users", "business.always_on_holdout_cost.users_per_588k_flight",
@@ -268,6 +360,13 @@ def _conversion(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
          "business.always_on_holdout_cost.conversions_forgone", hold["conversions_forgone"], TOL_JSON),
         ("always-on holdout: value forgone in USD (assumed value per conversion)", "holdout_value_forgone_usd",
          "business.always_on_holdout_cost.value_forgone_usd", hold["value_forgone_usd"], TOL_JSON),
+        ("always-on holdout: PSA share as run", "as_run_control_share",
+         "business.always_on_holdout_cost.as_run_control_share", hold["as_run_control_share"], TOL_JSON),
+        ("always-on holdout: conversions the as-run PSA arm forgoes", "as_run_conversions_forgone",
+         "business.always_on_holdout_cost.as_run_control_conversions_forgone",
+         hold["as_run_control_conversions_forgone"], TOL_JSON),
+        ("always-on holdout: extra conversions forgone vs the as-run PSA arm", "holdout_extra_conversions_vs_as_run",
+         "business.always_on_holdout_cost.extra_conversions_vs_as_run", hold["extra_conversions_vs_as_run"], TOL_JSON),
     ]:
         ck.add(f"ad readout: {check}", f, r[col], f"results.json ad.{key}", value, tol)
 
@@ -312,6 +411,9 @@ def _srm(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         else:
             ck.add(f"{lbl}: probability column is NULL (split not on target)", f,
                    r["prob_exactly_nearest_integer"], "expected: NULL", None)
+        # the reading: a quota-exact split makes the test uninformative, whatever its status
+        ck.add(f"{lbl}: reading", f, r["reading"], qsrc + "is_nearest_integer_to_target, else " + j + "status",
+               SRM_READINGS["quota" if q["is_nearest_integer_to_target"] else srm["status"]])
 
 
 def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
@@ -333,8 +435,12 @@ def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
                sum(all(s.at[k, a] == p.at[k, b] for a, b in count_cols) for k in common), src, len(p))
         ck.add(f"{lbl}: segments with matching z statistic (lift != 0)", f,
                sum(abs(s.at[k, "z_stat"] - p.at[k, "z"]) <= TOL_FULL for k in common), src, len(p))
-        ck.add(f"{lbl}: segments with matching contrast vs the other segments (lift_rest, diff, CI)", f,
+        ck.add(f"{lbl}: segments with matching contrast vs the other segments (lift_rest, raw diff, CI)", f,
                sum(all(abs(s.at[k, a] - p.at[k, b]) <= TOL_FULL for a, b in contrast_cols) for k in common), src, len(p))
+        # the point estimate is raw; the CI is Agresti-Caffo, so it is centred on the adjusted difference
+        ck.add(f"{lbl}: segments whose CI is centred on the Agresti-Caffo difference (SQL diff_vs_rest_ac)", f,
+               sum(abs(s.at[k, "diff_vs_rest_ac"] - (p.at[k, "diff_vs_rest_ci_low"] + p.at[k, "diff_vs_rest_ci_high"]) / 2)
+                   <= TOL_FULL for k in common), src + " (diff_vs_rest_ci_low + diff_vs_rest_ci_high) / 2", len(p))
         ck.add(f"{lbl}: segments with matching p-value vs the other segments (from SQL z_vs_rest)", f,
                sum(abs(p_rest[k] - p.at[k, "p_vs_rest"]) <= TOL_FULL for k in common), src + " p_vs_rest", len(p))
 
@@ -371,7 +477,7 @@ def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
                jh + "sensitivity_stratified.mh_risk_diff", h["sensitivity_stratified"]["mh_risk_diff"], TOL_JSON)
         for k in p.index:
             ck.add(f"{lbl} = {k}: absolute lift", f, s["abs_lift"].get(k), src, p.at[k, "abs_lift"], TOL_FULL)
-            ck.add(f"{lbl} = {k}: lift minus the other segments' lift", f, s["diff_vs_rest"].get(k), src,
+            ck.add(f"{lbl} = {k}: lift minus the other segments' lift (raw)", f, s["diff_vs_rest"].get(k), src,
                    p.at[k, "diff_vs_rest"], TOL_FULL)
 
     # daypart: the Night cell behind the daypart interaction test
@@ -393,16 +499,44 @@ def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     users = e["users_ad"] + e["users_psa"]
     for check, value, key, tol in (
         ("share of users with 20 ads or fewer", users[LIGHT_BUCKETS].sum() / users.sum(), "share_users_le_20_ads", TOL_JSON),
+        ("share of ad users with 20 ads or fewer", e.loc[LIGHT_BUCKETS, "users_ad"].sum() / e["users_ad"].sum(),
+         "share_ad_users_le_20_ads", TOL_JSON),
         ("share of ad users with 36-200 ads", e.loc[HEAVY_BUCKETS, "users_ad"].sum() / e["users_ad"].sum(),
          "share_ad_users_36_200", TOL_JSON),
+        ("bucket-by-bucket incremental conversions, all buckets", e["incremental_conversions"].sum(),
+         "incremental_conversions_bucketwise_total", TOL_JSON),
+        ("bucket-by-bucket incremental conversions, 36-200 ads", e.loc[HEAVY_BUCKETS, "incremental_conversions"].sum(),
+         "incremental_conversions_36_200", TOL_JSON),
         ("share of incremental conversions from 36-200 ads",
          e.loc[HEAVY_BUCKETS, "incremental_conversions"].sum() / e["incremental_conversions"].sum(),
          "share_incremental_conversions_36_200", TOL_JSON),
+        ("share of ad users with 21-35 ads", e.at["21-35", "share_of_arm_ad"], "bucket_21_35.share_ad_users", TOL_JSON),
+        ("lift with 21-35 ads", e.at["21-35", "abs_lift"], "bucket_21_35.abs_lift", TOL_JSON),
         ("PSA conversion rate in the lowest bucket", e["conversion_rate_psa"].iloc[0], "control_rate_lowest_bucket", TOL_JSON),
         ("PSA conversion rate in the highest bucket", e["conversion_rate_psa"].iloc[-1], "control_rate_highest_bucket", TOL_JSON),
         ("PSA users in the highest bucket", e["users_psa"].iloc[-1], "top_bucket_control_users", TOL_EXACT),
     ):
-        ck.add(f"exposure: {check}", f, value, jc + key, conc[key], tol)
+        ck.add(f"exposure: {check}", f, value, jc + key, _dig(conc, key), tol)
+    # Each bucket against its own PSA rate: the bucket-by-bucket incremental conversions
+    for bucket, value in conc["incremental_conversions_by_bucket"].items():
+        ck.add(f"exposure bucket {bucket}: incremental conversions (bucket's own PSA rate)", f,
+               e.at[bucket, "incremental_conversions"], jc + f"incremental_conversions_by_bucket[{bucket}]", value, TOL_JSON)
+    # 20 ads or fewer, pooled: the SQL bucket counts must add up to the pandas filter total_ads <= 20.
+    # The pooled test, its CI and its MDE are Python-only (src.stats.two_prop_test / mde).
+    light, le20, jl = e.loc[LIGHT_BUCKETS], conc["le_20_ads_pooled"], jc + "le_20_ads_pooled."
+    n_t, n_c = light["users_ad"].sum(), light["users_psa"].sum()
+    k_t, k_c = light["conversions_ad"].sum(), light["conversions_psa"].sum()
+    for check, value, key, tol in (
+        ("users (ad)", n_t, "n_t", TOL_EXACT),
+        ("users (psa)", n_c, "n_c", TOL_EXACT),
+        ("conversions (ad)", k_t, "conv_t", TOL_EXACT),
+        ("conversions (psa)", k_c, "conv_c", TOL_EXACT),
+        ("conversion rate (ad)", k_t / n_t, "rate_t", TOL_JSON),
+        ("conversion rate (psa)", k_c / n_c, "rate_c", TOL_JSON),
+        ("lift", k_t / n_t - k_c / n_c, "abs_lift", TOL_JSON),
+    ):
+        ck.add(f"exposure 20 ads or fewer (SQL buckets {', '.join(LIGHT_BUCKETS)} pooled): {check}", f, value,
+               jl + key, le20[key], tol)
 
 
 def _stg_cookie(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
@@ -454,6 +588,26 @@ def _retention(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
                (d["d7_retention_rate"].max() - d["d7_retention_rate"].min()) * 100,
                j + f"gap_by_dimension[{gap['column']}].gap_pp", gap["gap_pp"], TOL_JSON)
 
+    # The early-churn segment (R6 target): players with < 15 rounds = the SQL buckets 0, 1-4 and 5-14.
+    # Its re-engagement test sizing is Python-only (src.stats.required_total_n).
+    early, je = cookie["early_churn_segment"], j + "early_churn_segment."
+    low = seg.loc["rounds_bucket"].loc[EARLY_CHURN_BUCKETS]
+    players = low["players"].sum()
+    for check, value, key, tol in (
+        ("players", players, "players", TOL_EXACT),
+        ("share of installs", players / seg.at[overall, "players"], "share_of_installs", TOL_JSON),
+        ("players back on Day 7", low["d7_retained"].sum(), "d7_players", TOL_EXACT),
+        ("D7 retention", low["d7_retained"].sum() / players, "retention_7", TOL_JSON),
+        ("D1 retention", low["d1_retained"].sum() / players, "retention_1", TOL_JSON),
+        ("highest D7 retention in one of its buckets", low["d7_retention_rate"].max(), "max_bucket_retention_7", TOL_JSON),
+        ("D7 of players who returned on Day 1 (all players)", seg.at[("d1_status", "Returned Day 1"), "d7_retention_rate"],
+         "d7_if_returned_day1", TOL_JSON),
+        ("D7 of players who did not return on Day 1 (all players)",
+         seg.at[("d1_status", "Did not return Day 1"), "d7_retention_rate"], "d7_if_not_returned_day1", TOL_JSON),
+    ):
+        ck.add(f"early-churn segment (< 15 rounds = buckets {', '.join(EARLY_CHURN_BUCKETS)}): {check}", f, value,
+               je + key, early[key], tol)
+
 
 def _gate(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     gate, rows = py["res"]["cookie"]["gate"], sql.set_index("metric")
@@ -478,96 +632,177 @@ def _gate(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ck.add(f"gate {label}: 95% Wald CI high", f, r["abs_diff_ci95_high"], src, hi, TOL_FULL)
 
 
+def _gate_two_prop(ck: _Checks, f: str, lbl: str, r: pd.Series, res: dict, src: str) -> None:
+    """One two-proportion row of sql/09 vs a src.stats.two_prop_test result in results.json."""
+    for check, col, key, tol in GATE_TWO_PROP:
+        ck.add(f"{lbl}: {check}", f, r[col], src + key, res[key], tol)
+    ck.add(f"{lbl}: p-value (two-sided, from the SQL z)", f, _p1(r["z_stat"]), src + "p_value", res["p_value"], TOL_JSON)
+
+
 def _gate_integrity(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
-    gate, c = py["res"]["cookie"]["gate"], py["c_clean"]
-    rows, j = sql.set_index("stratum"), "results.json cookie.gate."
-    ck.add("gate integrity: rows (all players + 3 pre-gate strata)", f, len(rows), "expected", len(GATE_STRATA))
+    gate, c, j = py["res"]["cookie"]["gate"], py["c_clean"], "results.json cookie.gate."
+    keys = list(zip(sql["section"], sql["population"], sql["measure"]))
+    ck.add("gate integrity: rows (section | population | measure), in order", f,
+           "; ".join(" | ".join(k) for k in keys), "expected: GATE_ROWS in src/sql_check.py",
+           "; ".join(" | ".join(k) for k in GATE_ROWS))
+    if len(set(keys)) != len(keys):
+        raise ReconciliationError(f"{f}: duplicate (section, population, measure) rows")
+    rows = sql.set_index(["section", "population", "measure"])
 
-    # Step 1 - SRM by stratum, raw assignment counts
-    for stratum, srm_key, _ in GATE_STRATA:
-        srm, key = (gate["srm"], "srm") if srm_key is None else (gate["srm_by_stratum"][srm_key],
-                                                                  f"srm_by_stratum.{srm_key}")
-        r, lbl = rows.loc[stratum], f"gate integrity {stratum}"
-        ck.add(f"{lbl}: assigned gate_40", f, r["assigned_gate_40"], j + f"{key}.n_t", srm["n_t"])
-        ck.add(f"{lbl}: assigned gate_30", f, r["assigned_gate_30"], j + f"{key}.n_c", srm["n_c"])
-        ck.add(f"{lbl}: SRM chi-square", f, r["srm_chi2"], j + f"{key}.chi2", srm["chi2"], TOL_JSON)
-        ck.add(f"{lbl}: SRM status", f, r["srm_status"], j + f"{key}.status", srm["status"])
-    ck.add("gate integrity: extra gate_40 players with < 15 rounds", f, rows.at["Rounds < 15", "extra_gate_40"],
-           j + "excess_players_with_lt_15_rounds", gate["excess_players_with_lt_15_rounds"])
+    def row(section: str, population: str, measure: str) -> pd.Series:
+        return rows.loc[(section, population, measure)]
 
-    # Step 2 - D7 by stratum and version, analysis population
-    d7 = {"All players": ("retention_7", gate["retention_7"])}
-    for stratum, _, nc_key in GATE_STRATA:
-        if nc_key:
-            d7[stratum] = (f"negative_control.{nc_key}.retention_7", gate["negative_control"][nc_key]["retention_7"])
-    for stratum, (key, g) in d7.items():
-        r, lbl, src = rows.loc[stratum], f"gate integrity {stratum}", j + f"{key}."
-        for check, col, k, tol in (
-            ("players gate_40", "players_gate_40", "n_t", TOL_EXACT),
-            ("players gate_30", "players_gate_30", "n_c", TOL_EXACT),
-            ("D7 retained gate_40", "d7_retained_gate_40", "conv_t", TOL_EXACT),
-            ("D7 retained gate_30", "d7_retained_gate_30", "conv_c", TOL_EXACT),
-            ("D7 rate gate_40", "d7_rate_gate_40", "rate_t", TOL_JSON),
-            ("D7 rate gate_30", "d7_rate_gate_30", "rate_c", TOL_JSON),
-            ("D7 difference", "d7_diff", "abs_lift", TOL_JSON),
-            ("D7 pooled z statistic", "d7_z", "z", TOL_JSON),
+    # The rounds bands were chosen after seeing the overall SRM warning: no SRM status label anywhere
+    text = sql.select_dtypes(exclude="number").astype(str)
+    ck.add("gate integrity: SRM status columns (the bands are post-hoc subsets)", f,
+           sum("status" in col for col in sql.columns), "expected: none", 0)
+    ck.add(f"gate integrity: cells with an SRM status word ({' / '.join(SRM_STATUS_WORDS)})", f,
+           int(text.apply(lambda col: col.str.contains(r"\b(?:" + "|".join(SRM_STATUS_WORDS) + r")\b")).to_numpy().sum()),
+           "expected: none", 0)
+
+    # Step 1 - assignment by band, raw counts: net excess and the SRM statistic (p descriptive for the bands)
+    for band, srm_key, _ in GATE_BANDS:
+        srm, key = (gate["srm"], "srm.") if srm_key is None else (gate["srm_by_stratum"][srm_key],
+                                                                  f"srm_by_stratum.{srm_key}.")
+        r, lbl = row("assignment", band, "assigned players"), f"gate assignment {band}"
+        ck.add(f"{lbl}: assigned gate_40", f, r["n_gate_40"], j + key + "n_t", srm["n_t"])
+        ck.add(f"{lbl}: assigned gate_30", f, r["n_gate_30"], j + key + "n_c", srm["n_c"])
+        net_key = "excess_players_raw" if srm_key is None else key + "net_excess_t"
+        ck.add(f"{lbl}: net excess of gate_40 players", f, r["difference"], j + net_key,
+               gate["excess_players_raw"] if srm_key is None else srm["net_excess_t"])
+        ck.add(f"{lbl}: SRM chi-square (z_stat squared)", f, r["z_stat"] ** 2, j + key + "chi2", srm["chi2"], TOL_JSON)
+        ck.add(f"{lbl}: SRM p-value (from the SQL z)", f, _p1(r["z_stat"]), j + key + "p_value", srm["p_value"],
+               TOL_JSON)
+    ck.add("gate assignment: net excess of gate_40 players with < 15 rounds", f,
+           row("assignment", "Rounds < 15", "assigned players")["difference"], j + "excess_players_with_lt_15_rounds",
+           gate["excess_players_with_lt_15_rounds"])
+
+    # Step 2 - D7 and D1 by band and version, analysis population
+    for measure, metric in (("D7", "retention_7"), ("D1", "retention_1")):
+        for band, _, paths in GATE_BANDS:
+            r = row("retention", band, measure)
+            for i, path in enumerate(paths):
+                where = ".".join((*path, metric))
+                lbl = f"gate {measure} {band}" + (f" (again, as {'.'.join(path)})" if i else "")
+                _gate_two_prop(ck, f, lbl, r, _dig(gate, where), j + where + ".")
+    for band, lo, hi in GATE_DRILL_DOWN:   # share of each arm in the drill-down bands (not in results.json)
+        sub = c[c["sum_gamerounds"].between(lo, hi)]
+        for arm in ("gate_40", "gate_30"):
+            ck.add(f"gate D7 {band}: share of {arm} players", f, row("retention", band, "D7")[f"share_of_arm_{arm}"],
+                   "pandas: src.data.clean_cookie(raw CSV)", (sub["version"] == arm).sum() / (c["version"] == arm).sum(),
+                   TOL_FULL)
+    # negative-control sensitivity: gate_40's net excess of < 15-round players removed
+    nx, jx = gate["negative_control"]["never_reached_30_excess_removed"], j + "negative_control.never_reached_30_excess_removed."
+    r_nx = row("retention", "Rounds < 30, net excess removed", "D7")
+    _gate_two_prop(ck, f, "gate D7 Rounds < 30, net excess removed", r_nx, nx["retention_7"], jx + "retention_7.")
+    ck.add("gate D7 Rounds < 30, net excess removed: gate_40 players removed", f,
+           row("retention", "Rounds < 30", "D7")["n_gate_40"] - r_nx["n_gate_40"], jx + "excess_removed",
+           nx["excess_removed"])
+
+    # Step 3 - decomposition of the naive D7 and D1 gaps (columns on the 'retention' rows)
+    for measure, dkey in (("D7", "d7_decomposition"), ("D1", "d1_decomposition")):
+        dec, jd, lbl = gate[dkey], j + f"{dkey}.", f"gate {measure} decomposition"
+        for band, key in GATE_PARTITION:
+            r, d = row("retention", band, measure), dec["detail"][key]
+            for check, col, k in (("share of gate_40 players", "share_of_arm_gate_40", "w_t"),
+                                  ("share of gate_30 players", "share_of_arm_gate_30", "w_c"),
+                                  ("rate gate_40", "value_gate_40", "r_t"),
+                                  ("rate gate_30", "value_gate_30", "r_c"),
+                                  ("within term", "within_term", "within"),
+                                  ("composition term", "composition_term", "composition")):
+                ck.add(f"{lbl}, {band}: {check}", f, r[col], jd + f"detail.{key}.{k}", d[k], TOL_JSON)
+        tot, never = row("retention", "All players", measure), row("retention", "Rounds < 30", measure)
+        reach, ci = row("retention", "Rounds >= 30", measure), dec["install_level_effect_ci_if_only_reachers"]
+        for check, value, key, value_json in (
+            ("naive gap", tot["difference"], "naive_diff", dec["naive_diff"]),
+            ("player mix (composition, both bands)", tot["composition_term"], "composition", dec["composition"]),
+            ("players who never met a gate (within, rounds < 30)", never["within_term"], "within_never_reached_30",
+             dec["within_never_reached_30"]),
+            ("players who could meet the gate (within, rounds >= 30)", reach["within_term"], "within_reached_30",
+             dec["within_reached_30"]),
+            ("within + composition = naive gap (no residual)", tot["within_term"] + tot["composition_term"],
+             "naive_diff", dec["naive_diff"]),
+            ("average share of players with 30+ rounds",
+             (reach["share_of_arm_gate_40"] + reach["share_of_arm_gate_30"]) / 2, "share_reached_30",
+             dec["share_reached_30"]),
+            ("the part the gate could explain, per install", reach["within_term"],
+             "install_level_effect_if_only_reachers", dec["install_level_effect_if_only_reachers"]),
+            ("the part the gate could explain, 95% CI low", reach["within_ci95_low"],
+             "install_level_effect_ci_if_only_reachers[0]", ci[0]),
+            ("the part the gate could explain, 95% CI high", reach["within_ci95_high"],
+             "install_level_effect_ci_if_only_reachers[1]", ci[1]),
         ):
-            ck.add(f"{lbl}: {check}", f, r[col], src + k, g[k], tol)
-        lo, hi = S.wald_diff_ci(g["conv_t"], g["n_t"], g["conv_c"], g["n_c"], alpha=C.ALPHA)
-        wsrc = "src.stats.wald_diff_ci on the results.json counts"
-        ck.add(f"{lbl}: D7 95% Wald CI low", f, r["d7_diff_ci95_low"], wsrc, lo, TOL_FULL)
-        ck.add(f"{lbl}: D7 95% Wald CI high", f, r["d7_diff_ci95_high"], wsrc, hi, TOL_FULL)
-    # the drill-down row is not in results.json: re-compute it in pandas
-    low, psrc = c[c["sum_gamerounds"] < 15], "pandas: src.data.clean_cookie(raw CSV), rounds < 15"
-    for arm in ("gate_40", "gate_30"):
-        a = low[low["version"] == arm]
-        ck.add(f"gate integrity Rounds < 15: players {arm}", f, rows.at["Rounds < 15", f"players_{arm}"], psrc, len(a))
-        ck.add(f"gate integrity Rounds < 15: D7 retained {arm}", f, rows.at["Rounds < 15", f"d7_retained_{arm}"],
-               psrc, int(a["retention_7"].sum()))
-        ck.add(f"gate integrity Rounds < 15: share of {arm} players", f, rows.at["Rounds < 15", f"share_of_arm_{arm}"],
-               psrc, len(a) / int((c["version"] == arm).sum()), TOL_FULL)
+            ck.add(f"{lbl}: {check}", f, value, jd + key, value_json, TOL_JSON)
+        ck.add(f"{lbl}: within terms of both bands (All players row)", f, tot["within_term"],
+               jd + "within_never_reached_30 + within_reached_30",
+               dec["within_never_reached_30"] + dec["within_reached_30"], 2 * TOL_JSON)  # sum of two rounded values
 
-    # Step 3 - decomposition of the naive D7 gap
-    dec, jd = gate["d7_decomposition"], j + "d7_decomposition."
-    for stratum, _, key in GATE_STRATA:
-        if key is None:
-            continue
-        d, r, lbl = dec["detail"][key], rows.loc[stratum], f"gate integrity {stratum}"
-        for check, col, k in (("share of gate_40 players", "share_of_arm_gate_40", "w_t"),
-                              ("share of gate_30 players", "share_of_arm_gate_30", "w_c"),
-                              ("D7 gap within term", "d7_within_term", "within"),
-                              ("D7 gap composition term", "d7_composition_term", "composition")):
-            ck.add(f"{lbl}: {check}", f, r[col], jd + f"detail.{key}.{k}", d[k], TOL_JSON)
-    tot, reach = rows.loc["All players"], rows.loc["Rounds >= 30"]
-    ck.add("gate integrity: naive D7 gap", f, tot["d7_diff"], jd + "naive_diff", dec["naive_diff"], TOL_JSON)
-    ck.add("gate integrity: D7 gap from player mix (composition)", f, tot["d7_composition_term"], jd + "composition",
-           dec["composition"], TOL_JSON)
-    ck.add("gate integrity: D7 gap within strata (both strata)", f, tot["d7_within_term"],
-           jd + "within_never_reached_30 + within_reached_30",
-           dec["within_never_reached_30"] + dec["within_reached_30"], 2 * TOL_JSON)  # sum of two rounded values
-    ck.add("gate integrity: within + composition = naive D7 gap", f,
-           tot["d7_within_term"] + tot["d7_composition_term"], jd + "naive_diff", dec["naive_diff"], TOL_JSON)
-    ck.add("gate integrity: average share of players who reached level 30", f,
-           (reach["share_of_arm_gate_40"] + reach["share_of_arm_gate_30"]) / 2, jd + "share_reached_30",
-           dec["share_reached_30"], TOL_JSON)
-    ck.add("gate integrity: install-level effect if only players who reach the gate are affected", f,
-           reach["d7_within_term"], jd + "install_level_effect_if_only_reachers",
-           dec["install_level_effect_if_only_reachers"], TOL_JSON)
-    # results.json scales the Newcombe CI; the SQL scales the Wald CI -> compare with the same formula
-    g = gate["negative_control"]["reached_30"]["retention_7"]
-    w = (g["n_t"] / gate["players"]["gate_40"] + g["n_c"] / gate["players"]["gate_30"]) / 2
-    lo, hi = S.wald_diff_ci(g["conv_t"], g["n_t"], g["conv_c"], g["n_c"], alpha=C.ALPHA)
-    wsrc = "average share x src.stats.wald_diff_ci on the results.json counts"
-    ck.add("gate integrity: install-level effect, 95% CI low", f, reach["d7_within_ci95_low"], wsrc, w * lo, TOL_FULL)
-    ck.add("gate integrity: install-level effect, 95% CI high", f, reach["d7_within_ci95_high"], wsrc, w * hi, TOL_FULL)
+    # Step 4 - best case for gate_40: every extra install (analysis population) a junk install that never returned
+    bc, jb, lbl = gate["best_case_for_gate_40"], j + "best_case_for_gate_40.", "gate best case for gate_40"
+    r_bc, tot7 = row("best case for gate_40", "All players, extra installs removed", "D7"), row("retention", "All players", "D7")
+    for check, value, key, value_json, tol in (
+        ("extra gate_40 installs removed", tot7["n_gate_40"] - r_bc["n_gate_40"], "excess_players_gate_40",
+         bc["excess_players_gate_40"], TOL_EXACT),
+        ("D7 gap if they never returned", r_bc["difference"], "d7_diff_if_excess_removed",
+         bc["d7_diff_if_excess_removed"], TOL_JSON),
+        ("95% CI low (Newcombe)", r_bc["ci95_low"], "ci[0]", bc["ci"][0], TOL_JSON),
+        ("95% CI high (Newcombe)", r_bc["ci95_high"], "ci[1]", bc["ci"][1], TOL_JSON),
+        ("p-value (two-sided, from the SQL z)", _p1(r_bc["z_stat"]), "p_value", bc["p_value"], TOL_JSON),
+    ):
+        ck.add(f"{lbl}: {check}", f, value, jb + key, value_json, tol)
+    for check, col, key in (("gate_40 players back on Day 7 (all kept)", "k_gate_40", "conv_t"),
+                            ("gate_30 players", "n_gate_30", "n_c"),
+                            ("gate_30 players back on Day 7", "k_gate_30", "conv_c")):
+        ck.add(f"{lbl}: {check}", f, r_bc[col], j + f"retention_7.{key}", gate["retention_7"][key])
 
-    # Worst case for the SRM: gate_40's extra players all never returned
-    wc, jw = gate["worst_case_bound"], j + "worst_case_bound."
-    ck.add("gate integrity: extra gate_40 players (analysis population)", f,
-           tot["players_gate_40"] - tot["players_gate_30"], jw + "excess_players_gate_40", wc["excess_players_gate_40"])
-    ck.add("gate integrity: D7 gap if the extra gate_40 players never returned", f,
-           tot["d7_diff_if_extra_never_returned"], jw + "d7_diff_if_excess_removed", wc["d7_diff_if_excess_removed"],
-           TOL_JSON)
+    # Step 5 - play: pre-gate rounds (all players) and rounds among players with 30+ rounds
+    pg, jp = gate["pre_gate_engagement"], j + "pre_gate_engagement."
+    r = row("play", "All players", "pre-gate rounds (capped at 29), mean")
+    for arm, col, key in (("gate_40", "value_gate_40", "mean_capped_29_t"), ("gate_30", "value_gate_30", "mean_capped_29_c")):
+        ck.add(f"gate play: pre-gate rounds (capped at 29), mean {arm}", f, r[col], jp + key, pg[key], TOL_JSON)
+        ck.add(f"gate play: pre-gate rounds, players {arm}", f, r[f"n_{arm}"], j + f"players.{arm}", gate["players"][arm])
+    rr, jr, lbl = gate["rounds_among_reachers"], j + "rounds_among_reachers.", "gate play among players with 30+ rounds"
+    med, mean = row("play", "Rounds >= 30", "rounds, median"), row("play", "Rounds >= 30", "rounds, mean")
+    for check, r_, col, key, tol in (
+        ("players gate_40", med, "n_gate_40", "n_t", TOL_EXACT),
+        ("players gate_30", med, "n_gate_30", "n_c", TOL_EXACT),
+        ("median rounds gate_40", med, "value_gate_40", "median_t", TOL_JSON),
+        ("median rounds gate_30", med, "value_gate_30", "median_c", TOL_JSON),
+        ("players gate_40 (mean row)", mean, "n_gate_40", "n_t", TOL_EXACT),
+        ("players gate_30 (mean row)", mean, "n_gate_30", "n_c", TOL_EXACT),
+        ("mean rounds gate_40", mean, "value_gate_40", "mean_t", TOL_JSON),
+        ("mean rounds gate_30", mean, "value_gate_30", "mean_c", TOL_JSON),
+        ("mean difference", mean, "difference", "mean_diff", TOL_JSON),
+    ):
+        ck.add(f"{lbl}: {check}", f, r_[col], jr + key, rr[key], tol)
+    ck.add(f"{lbl}: median difference", f, med["difference"], jr + "median_t - median_c",
+           rr["median_t"] - rr["median_c"], 2 * TOL_JSON)
+    _gate_two_prop(ck, f, f"{lbl}: share with 40+ rounds", row("play", "Rounds >= 30", "share with 40+ rounds"),
+                   rr["share_past_40_rounds"], jr + "share_past_40_rounds.")
+
+    # Step 6 - re-test sizing at the change fixed in config.yaml (Cohen's h closed form in SQL)
+    rs, js, lbl = gate["retest_sizing"], j + "retest_sizing.", "gate re-test sizing"
+    inst, rch = (row("re-test sizing", band, "D7 change to detect") for band in ("All players", "Rounds >= 30"))
+    reach7 = row("retention", "Rounds >= 30", "D7")
+    for check, value, key, tol in (
+        ("smallest D7 change per install (SQL params)", -inst["difference"], "smallest_d7_change_per_install", TOL_JSON),
+        ("baseline D7, all installs (gate_30)", inst["value_gate_30"], "baseline_d7_install", TOL_JSON),
+        ("installs needed, analysed over all installs (50/50)", inst["installs_needed_5050"],
+         "installs_needed_install_level_5050", TOL_EXACT),
+        ("players needed, analysed over all installs (50/50)", inst["players_needed_5050"],
+         "installs_needed_install_level_5050", TOL_EXACT),
+        ("average share of players with 30+ rounds",
+         (reach7["share_of_arm_gate_40"] + reach7["share_of_arm_gate_30"]) / 2, "share_reached_30", TOL_JSON),
+        ("the same change among players with 30+ rounds", -rch["difference"], "equivalent_change_among_reachers",
+         TOL_JSON),
+        ("baseline D7 among players with 30+ rounds (gate_30)", rch["value_gate_30"], "baseline_d7_reachers", TOL_JSON),
+        ("players with 30+ rounds needed (50/50)", rch["players_needed_5050"], "reachers_needed_5050", TOL_EXACT),
+        ("installs needed for the primary analysis among them (50/50)", rch["installs_needed_5050"],
+         "installs_needed_reacher_analysis_5050", TOL_EXACT),
+    ):
+        ck.add(f"{lbl}: {check}", f, value, js + key, rs[key], tol)
+    ck.add(f"{lbl}: smallest D7 change (SQL params) matches config.yaml", f, -inst["difference"],
+           "results.json config.gate_smallest_d7_change", py["res"]["config"]["gate_smallest_d7_change"], TOL_JSON)
 
 
 def _data_quality(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
@@ -622,6 +857,13 @@ def _data_quality(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ck.add(f"DQ {dataset}: {name}", f, observed.get((dataset, name)), src, value, tol)
     ck.add("DQ: checks with status FAIL", f, int((sql["status"] == "FAIL").sum()),
            "expected: every hard DQ rule passes", 0)
+    ck.add(f"DQ: statuses other than {' / '.join(DQ_STATUS_WORDS)}", f, int((~sql["status"].isin(DQ_STATUS_WORDS)).sum()),
+           "expected: the DQ log's status words (docs/03_data_quality_checks.md)", 0)
+    # 'WARNING if > 0' rules: WARNING exactly where the Python value is above 0, in check order
+    ck.add("DQ: checks with status WARNING", f, ", ".join(sql.loc[sql["status"] == "WARNING", "check_name"]),
+           "expected: the 'WARNING if > 0' checks whose Python value is above 0",
+           ", ".join(name for dataset, name, _, value, _ in expected
+                     if (dataset, name) in DQ_WARNING_IF_POSITIVE and value > 0))
 
 
 RECONCILERS: dict[str, Callable[[_Checks, str, pd.DataFrame, dict], None]] = {

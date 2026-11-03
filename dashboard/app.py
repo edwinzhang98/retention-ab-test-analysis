@@ -9,8 +9,9 @@ import streamlit as st
 
 from common import inject_css
 
+# "auto": the page list stays open on a desktop and collapses on a phone, where it would cover the content.
 st.set_page_config(page_title="Growth Experiment Readout", page_icon="📊", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")
 inject_css()
 
 pages = [

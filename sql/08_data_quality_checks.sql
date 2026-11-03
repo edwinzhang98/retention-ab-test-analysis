@@ -11,8 +11,12 @@
 --             check_name      what is measured
 --             observed_value  the measured value
 --             rule            'must be 0' | 'must be >= 0' | 'must be >= 1' |
---                             'warn if > 0' | 'info' (context, no pass / fail)
---             status          'pass' | 'FAIL' | 'warn' | 'info'
+--                             'WARNING if > 0' | 'info' (context, no rule)
+--             status          'PASS' | 'WARNING' | 'FAIL' (the status words of the DQ log,
+--                             docs/03_data_quality_checks.md) or 'INFO' (SQL only): PASS = as expected;
+--                             WARNING = handled, or limits what we can claim (the caveat
+--                             travels with the numbers); FAIL = blocks the analysis until
+--                             fixed; INFO = context only, no rule
 -- Run     : from the repo root, one of
 --             python -m src.sql_check sql/08_data_quality_checks.sql   (print this result)
 --             python -m src.sql_check                                  (run every file + reconcile)
@@ -28,9 +32,11 @@
 --           - d7_without_d1 is expected, not an error: retention_7 means "came back
 --             on day 7", which does not require coming back on day 1.
 --           - zero_round_players_flagged_d1 / _d7: players with 0 rounds who are
---             still flagged as retained. The flags therefore mean "came back to the
---             game", not "played a round". It is about 0.1% of players and no
---             conclusion depends on it.
+--             still flagged as retained (WARNING, as in the DQ log). The flags
+--             therefore mean "came back to the game", not "played a round". It is
+--             about 0.1% of players and no conclusion depends on it.
+--           - players_over_10000_rounds is a WARNING, not a FAIL: the row is handled
+--             (excluded in staging) and the analysis continues.
 -- =============================================================================
 
 WITH marketing AS (
@@ -94,40 +100,40 @@ cookie_profile AS (
 ),
 
 checks (check_id, dataset, check_name, observed_value, rule) AS (
-    SELECT  1, 'marketing_ab', 'rows',                               n_rows,                     'info'         FROM marketing_profile UNION ALL
-    SELECT  2, 'marketing_ab', 'duplicate_user_id',                  n_rows - n_distinct_users,  'must be 0'    FROM marketing_profile UNION ALL
-    SELECT  3, 'marketing_ab', 'null_cells',                         null_cells,                 'must be 0'    FROM marketing_profile UNION ALL
-    SELECT  4, 'marketing_ab', 'invalid_test_group',                 invalid_test_group,         'must be 0'    FROM marketing_profile UNION ALL
-    SELECT  5, 'marketing_ab', 'invalid_most_ads_day',               invalid_most_ads_day,       'must be 0'    FROM marketing_profile UNION ALL
-    SELECT  6, 'marketing_ab', 'invalid_most_ads_hour',              invalid_most_ads_hour,      'must be 0'    FROM marketing_profile UNION ALL
-    SELECT  7, 'marketing_ab', 'total_ads_min',                      total_ads_min,              'must be >= 1' FROM marketing_profile UNION ALL
-    SELECT  8, 'marketing_ab', 'total_ads_median',                   total_ads_median,           'info'         FROM marketing_profile UNION ALL
-    SELECT  9, 'marketing_ab', 'total_ads_p99',                      total_ads_p99,              'info'         FROM marketing_profile UNION ALL
-    SELECT 10, 'marketing_ab', 'total_ads_p999',                     total_ads_p999,             'info'         FROM marketing_profile UNION ALL
-    SELECT 11, 'marketing_ab', 'total_ads_max',                      total_ads_max,              'info'         FROM marketing_profile UNION ALL
-    SELECT 12, 'marketing_ab', 'users_over_1000_ads',                users_over_1000_ads,        'info'         FROM marketing_profile UNION ALL
-    SELECT 13, 'cookie_cats',  'rows',                               n_rows,                     'info'         FROM cookie_profile    UNION ALL
-    SELECT 14, 'cookie_cats',  'duplicate_user_id',                  n_rows - n_distinct_users,  'must be 0'    FROM cookie_profile    UNION ALL
-    SELECT 15, 'cookie_cats',  'null_cells',                         null_cells,                 'must be 0'    FROM cookie_profile    UNION ALL
-    SELECT 16, 'cookie_cats',  'invalid_version',                    invalid_version,            'must be 0'    FROM cookie_profile    UNION ALL
-    SELECT 17, 'cookie_cats',  'sum_gamerounds_min',                 rounds_min,                 'must be >= 0' FROM cookie_profile    UNION ALL
-    SELECT 18, 'cookie_cats',  'sum_gamerounds_median',              rounds_median,              'info'         FROM cookie_profile    UNION ALL
-    SELECT 19, 'cookie_cats',  'sum_gamerounds_p99',                 rounds_p99,                 'info'         FROM cookie_profile    UNION ALL
-    SELECT 20, 'cookie_cats',  'sum_gamerounds_p999',                rounds_p999,                'info'         FROM cookie_profile    UNION ALL
-    SELECT 21, 'cookie_cats',  'sum_gamerounds_max',                 rounds_max,                 'info'         FROM cookie_profile    UNION ALL
-    SELECT 22, 'cookie_cats',  'zero_round_players',                 zero_round_players,         'info'         FROM cookie_profile    UNION ALL
-    SELECT 23, 'cookie_cats',  'zero_round_players_flagged_d1',      zero_round_flagged_d1,      'info'         FROM cookie_profile    UNION ALL
-    SELECT 24, 'cookie_cats',  'zero_round_players_flagged_d7',      zero_round_flagged_d7,      'info'         FROM cookie_profile    UNION ALL
-    SELECT 25, 'cookie_cats',  'players_over_10000_rounds',          players_over_10000_rounds,  'warn if > 0'  FROM cookie_profile    UNION ALL
-    SELECT 26, 'cookie_cats',  'rows_after_outlier_exclusion',       rows_after_exclusion,       'info'         FROM cookie_profile    UNION ALL
-    SELECT 27, 'cookie_cats',  'sum_gamerounds_max_after_exclusion', rounds_max_after_exclusion, 'info'         FROM cookie_profile    UNION ALL
-    SELECT 28, 'cookie_cats',  'd1_retention_all_rows',              d1_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
-    SELECT 29, 'cookie_cats',  'd1_retention_after_exclusion',       d1_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
-    SELECT 30, 'cookie_cats',  'd7_retention_all_rows',              d7_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
-    SELECT 31, 'cookie_cats',  'd7_retention_after_exclusion',       d7_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
-    SELECT 32, 'cookie_cats',  'mean_rounds_all_rows',               mean_rounds_all_rows,       'info'         FROM cookie_profile    UNION ALL
-    SELECT 33, 'cookie_cats',  'mean_rounds_after_exclusion',        mean_rounds_after_exclusion,'info'         FROM cookie_profile    UNION ALL
-    SELECT 34, 'cookie_cats',  'd7_without_d1',                      d7_without_d1,              'info'         FROM cookie_profile
+    SELECT  1, 'marketing_ab', 'rows',                               n_rows,                     'info'           FROM marketing_profile UNION ALL
+    SELECT  2, 'marketing_ab', 'duplicate_user_id',                  n_rows - n_distinct_users,  'must be 0'      FROM marketing_profile UNION ALL
+    SELECT  3, 'marketing_ab', 'null_cells',                         null_cells,                 'must be 0'      FROM marketing_profile UNION ALL
+    SELECT  4, 'marketing_ab', 'invalid_test_group',                 invalid_test_group,         'must be 0'      FROM marketing_profile UNION ALL
+    SELECT  5, 'marketing_ab', 'invalid_most_ads_day',               invalid_most_ads_day,       'must be 0'      FROM marketing_profile UNION ALL
+    SELECT  6, 'marketing_ab', 'invalid_most_ads_hour',              invalid_most_ads_hour,      'must be 0'      FROM marketing_profile UNION ALL
+    SELECT  7, 'marketing_ab', 'total_ads_min',                      total_ads_min,              'must be >= 1'   FROM marketing_profile UNION ALL
+    SELECT  8, 'marketing_ab', 'total_ads_median',                   total_ads_median,           'info'           FROM marketing_profile UNION ALL
+    SELECT  9, 'marketing_ab', 'total_ads_p99',                      total_ads_p99,              'info'           FROM marketing_profile UNION ALL
+    SELECT 10, 'marketing_ab', 'total_ads_p999',                     total_ads_p999,             'info'           FROM marketing_profile UNION ALL
+    SELECT 11, 'marketing_ab', 'total_ads_max',                      total_ads_max,              'info'           FROM marketing_profile UNION ALL
+    SELECT 12, 'marketing_ab', 'users_over_1000_ads',                users_over_1000_ads,        'info'           FROM marketing_profile UNION ALL
+    SELECT 13, 'cookie_cats',  'rows',                               n_rows,                     'info'           FROM cookie_profile    UNION ALL
+    SELECT 14, 'cookie_cats',  'duplicate_user_id',                  n_rows - n_distinct_users,  'must be 0'      FROM cookie_profile    UNION ALL
+    SELECT 15, 'cookie_cats',  'null_cells',                         null_cells,                 'must be 0'      FROM cookie_profile    UNION ALL
+    SELECT 16, 'cookie_cats',  'invalid_version',                    invalid_version,            'must be 0'      FROM cookie_profile    UNION ALL
+    SELECT 17, 'cookie_cats',  'sum_gamerounds_min',                 rounds_min,                 'must be >= 0'   FROM cookie_profile    UNION ALL
+    SELECT 18, 'cookie_cats',  'sum_gamerounds_median',              rounds_median,              'info'           FROM cookie_profile    UNION ALL
+    SELECT 19, 'cookie_cats',  'sum_gamerounds_p99',                 rounds_p99,                 'info'           FROM cookie_profile    UNION ALL
+    SELECT 20, 'cookie_cats',  'sum_gamerounds_p999',                rounds_p999,                'info'           FROM cookie_profile    UNION ALL
+    SELECT 21, 'cookie_cats',  'sum_gamerounds_max',                 rounds_max,                 'info'           FROM cookie_profile    UNION ALL
+    SELECT 22, 'cookie_cats',  'zero_round_players',                 zero_round_players,         'info'           FROM cookie_profile    UNION ALL
+    SELECT 23, 'cookie_cats',  'zero_round_players_flagged_d1',      zero_round_flagged_d1,      'WARNING if > 0' FROM cookie_profile    UNION ALL
+    SELECT 24, 'cookie_cats',  'zero_round_players_flagged_d7',      zero_round_flagged_d7,      'WARNING if > 0' FROM cookie_profile    UNION ALL
+    SELECT 25, 'cookie_cats',  'players_over_10000_rounds',          players_over_10000_rounds,  'WARNING if > 0' FROM cookie_profile    UNION ALL
+    SELECT 26, 'cookie_cats',  'rows_after_outlier_exclusion',       rows_after_exclusion,       'info'           FROM cookie_profile    UNION ALL
+    SELECT 27, 'cookie_cats',  'sum_gamerounds_max_after_exclusion', rounds_max_after_exclusion, 'info'           FROM cookie_profile    UNION ALL
+    SELECT 28, 'cookie_cats',  'd1_retention_all_rows',              d1_rate_all_rows,           'info'           FROM cookie_profile    UNION ALL
+    SELECT 29, 'cookie_cats',  'd1_retention_after_exclusion',       d1_rate_after_exclusion,    'info'           FROM cookie_profile    UNION ALL
+    SELECT 30, 'cookie_cats',  'd7_retention_all_rows',              d7_rate_all_rows,           'info'           FROM cookie_profile    UNION ALL
+    SELECT 31, 'cookie_cats',  'd7_retention_after_exclusion',       d7_rate_after_exclusion,    'info'           FROM cookie_profile    UNION ALL
+    SELECT 32, 'cookie_cats',  'mean_rounds_all_rows',               mean_rounds_all_rows,       'info'           FROM cookie_profile    UNION ALL
+    SELECT 33, 'cookie_cats',  'mean_rounds_after_exclusion',        mean_rounds_after_exclusion,'info'           FROM cookie_profile    UNION ALL
+    SELECT 34, 'cookie_cats',  'd7_without_d1',                      d7_without_d1,              'info'           FROM cookie_profile
 )
 
 SELECT
@@ -137,11 +143,11 @@ SELECT
     observed_value,
     rule,
     CASE rule
-        WHEN 'must be 0'    THEN CASE WHEN observed_value = 0  THEN 'pass' ELSE 'FAIL' END
-        WHEN 'must be >= 0' THEN CASE WHEN observed_value >= 0 THEN 'pass' ELSE 'FAIL' END
-        WHEN 'must be >= 1' THEN CASE WHEN observed_value >= 1 THEN 'pass' ELSE 'FAIL' END
-        WHEN 'warn if > 0'  THEN CASE WHEN observed_value > 0  THEN 'warn' ELSE 'pass' END
-        ELSE 'info'
+        WHEN 'must be 0'      THEN CASE WHEN observed_value = 0  THEN 'PASS'    ELSE 'FAIL' END
+        WHEN 'must be >= 0'   THEN CASE WHEN observed_value >= 0 THEN 'PASS'    ELSE 'FAIL' END
+        WHEN 'must be >= 1'   THEN CASE WHEN observed_value >= 1 THEN 'PASS'    ELSE 'FAIL' END
+        WHEN 'WARNING if > 0' THEN CASE WHEN observed_value > 0  THEN 'WARNING' ELSE 'PASS' END
+        ELSE 'INFO'
     END AS status
 FROM checks
 ORDER BY check_id;

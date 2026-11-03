@@ -16,6 +16,9 @@ analysis:
   gamerounds_outlier_max: 10000   # players above this are dropped (1 player, 49,854 rounds)
   value_per_conversion_usd: 50    # ILLUSTRATIVE default; no revenue in the data
   smallest_lift_of_interest_rel: 0.10   # smallest relative lift worth acting on (power is judged here)
+  gate_smallest_d7_change_pp: 0.5       # smallest D7 change per install worth acting on in a gate re-test
+                                        # (placeholder to agree with the Game PM; ~2.6% of gate_30's 19% D7)
+  onboarding_target_lift_pp: 0.5        # R6 sizing: D7 lift among players with < 15 rounds (placeholder)
   holdout_share: 0.05             # proposed always-on PSA holdout (cost estimate in results)
   srm_fail_p: 0.001               # SRM hard stop (Kohavi et al. convention)
   srm_warn_p: 0.01                # SRM warning band (project convention)

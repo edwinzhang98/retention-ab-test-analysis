@@ -60,12 +60,17 @@ def conf(alpha: float) -> str:
 
 
 def pp_range(lo: float, hi: float) -> str:
-    return f"{lo * 100:+.2f} to {hi * 100:+.2f} pp"
+    return f"{lo * 100:+.2f} to {hi * 100:+.2f} pp".replace("-", "−")
 
 
 def ci_short(lo: float, hi: float) -> str:
-    """Interval in pp without the unit, for the small metric notes."""
-    return f"{lo * 100:+.2f} to {hi * 100:+.2f}"
+    """Interval in pp without the unit, for the small metric notes (true minus sign)."""
+    return f"{lo * 100:+.2f} to {hi * 100:+.2f}".replace("-", "−")
+
+
+def approx(x: float) -> str:
+    """A rough count for prose, two significant figures: 1,008 -> '1,000'."""
+    return f"{float(f'{x:.2g}'):,.0f}"
 
 
 def p_text(p: float) -> str:
@@ -143,7 +148,7 @@ def design_numbers(share: float, alpha: float, power: float, rel: float) -> dict
     sesoi = rel * P_C
     return {"n_t": n_t, "n_c": n_c,
             "mde": S.mde(P_C, n_t, n_c, alpha, power)["mde_abs"],
-            "power_at_sesoi": S.achieved_power(P_C, P_C + sesoi, n_t, n_c, alpha),
+            "power_at_sesoi": S.power_at_lift(P_C, P_C + sesoi, n_t, n_c, alpha),
             "users_needed": S.required_total_n(P_C, sesoi, share, alpha, power)}
 
 
@@ -180,14 +185,18 @@ page_header("Experiment Readout: Ad vs PSA",
 share_inc = BZ["share_of_ad_conversions_incremental"]
 share_inc_ci = BZ["share_of_ad_conversions_incremental_ci"]
 overstate = BZ["last_touch_overstatement_x"]
+over_ci = BZ["last_touch_overstatement_ci"]
+over_txt = f"{overstate:.1f}× (95% CI {over_ci[0]:.1f}–{over_ci[1]:.1f}×)"
+# the smallest lift worth acting on, in conversions per ad flight (as-run ad arm) and USD at the assumed value
+SESOI_CONV0 = SESOI0 * P_C * T["n_t"]
 with st.container(border=True):
     st.markdown(
         f"**Readout in one line.** Ads lifted conversion from {fmt_pct(T['rate_c'])} (PSA) to "
         f"{fmt_pct(T['rate_t'])}: {fmt_pp(T['abs_lift'])} (95% CI {pp_range(T['abs_ci_low'], T['abs_ci_high'])}), "
         f"{T['rel_lift']:+.0%} relative, ≈{INC['point']:,.0f} incremental conversions. That is only "
-        f"{share_inc:.0%} of the ad arm's conversions, so last-touch attribution would overstate the campaign "
-        f"{overstate:.1f}×. **Keep the campaign with an always-on {HOLDOUT0:.0%} holdout; test a bigger budget "
-        "before doubling it.**")
+        f"{share_inc:.0%} of the ad arm's conversions, so last-touch (any-touch) attribution, which would credit "
+        f"every ad-group conversion to the ads, would overstate the campaign {over_txt}. **Keep the campaign with "
+        f"an always-on {HOLDOUT0:.0%} holdout; test a bigger budget before doubling it.**")
 
 # ---------------------------------------------------------------- 1. hypothesis & design
 st.subheader("1 · Hypothesis and design")
@@ -231,7 +240,7 @@ st.markdown(
     f"| {share_inc:.0%} (95% CI {share_inc_ci[0]:.0%} to {share_inc_ci[1]:.0%}) |\n"
     f"| Trust check | Sample ratio (SRM) | Observed vs intended {SPLIT0} split, chi-square test "
     f"| p = {p_text(SRM['p_value'])}, but uninformative: the ad arm is the nearest whole number to exactly "
-    f"{SHARE0:.0%}, so the test passes by construction (see risks) |\n"
+    f"{SHARE0:.0%}, most likely a fixed quota (a valid design), so the test cannot fail (see risks) |\n"
     f"| Trust check | Exposure parity | Ads seen per user, ad vs PSA: mean and distribution "
     f"| Means {g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f}; shapes differ a little (KS D = {ks_d:.3f}): "
     "exposure is an exploratory cut, never a covariate |\n"
@@ -313,7 +322,11 @@ else:
 # ---------------------------------------------------------------- 4. power
 st.subheader("4 · Power: what could this test detect?")
 st.caption("Power is a property of the design: the chance of detecting a true lift of a given size. It is judged "
-           "at the smallest lift worth acting on, never at the lift we happened to observe.")
+           "at the smallest lift worth acting on, never at the lift we happened to observe. That smallest lift "
+           f"({SESOI0:.0%} relative, {SESOI0 * P_C * 100:.2f} pp) is a placeholder assumption in config.yaml; in "
+           "practice the PM and Finance agree it before launch. It is "
+           f"≈{approx(SESOI_CONV0)} conversions per {T['n_t'] / 1e3:,.0f}K-user ad flight, "
+           f"≈{usd_k(SESOI_CONV0 * VALUE0)} at the assumed {usd(VALUE0, 0)} per conversion.")
 q1, q2, q3, q4 = st.columns([1.4, 1, 1.1, 1.2])
 share = q1.slider("Share of users in treatment (ad)", 50, 99, int(round(SHARE0 * 100)), step=1, format="%d%%",
                   key="p4_share", help=f"This test ran at {SHARE0:.0%}. Same total users, different split.") / 100
@@ -323,8 +336,9 @@ power = q3.select_slider("Power (1 − β)", POWERS, value=POWER0 if POWER0 in P
                          format_func=lambda x: f"{x:.0%}", key="p4_power")
 rel = q4.number_input("Smallest lift worth acting on (relative %)", min_value=1.0, max_value=100.0,
                       value=SESOI0 * 100, step=1.0, format="%.0f", key="p4_rel_target",
-                      help=f"The smallest relative lift the business would act on (project default "
-                           f"{SESOI0:.0%}). Marked on both charts and used for power and sample size.") / 100
+                      help=f"Project default {SESOI0:.0%}: a placeholder assumption in config.yaml, which in "
+                           "practice the PM and Finance agree before launch. Marked on both charts and used for "
+                           "power and sample size.") / 100
 
 sesoi = rel * P_C
 split = split_label(share)
@@ -337,9 +351,12 @@ n_t, n_c = sel_d["n_t"], sel_d["n_c"]
 same_users = f"The comparison note uses the same {N_TOTAL:,} users split {split_label(cmp_share)}."
 
 m1, m2, m3, m4 = st.columns(4)
+sesoi_conv = sesoi * T["n_t"]
 kpi(m1, "Lift worth acting on", f"{sesoi * 100:.2f} pp", f"{rel:.0%} × PSA rate {fmt_pct(P_C)}",
-    help="The smallest lift that would change the decision, set by the business before the test "
-         f"({rel:.0%} relative to the PSA conversion rate).")
+    help=f"The smallest lift that would change the decision ({rel:.0%} relative to the PSA conversion rate). The "
+         f"project default ({SESOI0:.0%}) is a placeholder assumption in config.yaml; in practice the PM and Finance "
+         f"agree it before launch. {rel:.0%} is ≈{approx(sesoi_conv)} conversions per {T['n_t'] / 1e3:,.0f}K-user "
+         f"ad flight, ≈{usd_k(sesoi_conv * VALUE0)} at the assumed {usd(VALUE0, 0)} per conversion.")
 kpi(m2, f"MDE at {split}", f"{sel_d['mde'] * 100:.2f} pp", f"{cmp_label}: {cmp_d['mde'] * 100:.2f} pp",
     help=f"Minimum detectable effect: the smallest true lift caught {power:.0%} of the time at α = {pw_alpha:.2f}, "
          f"with {n_t:,} ad and {n_c:,} PSA users. {same_users}")
@@ -398,14 +415,18 @@ val = {k: v * value for k, v in INC.items()}
 n1, n2, n3, n4 = st.columns(4)
 kpi(n1, "Incremental conversions", f"{INC['point']:,.0f}", f"95% CI {INC['ci_low']:,.0f} to {INC['ci_high']:,.0f}")
 kpi(n2, "Share caused by the ads", f"{share_inc:.0%}", f"95% CI {share_inc_ci[0]:.0%} to {share_inc_ci[1]:.0%}")
-kpi(n3, "Last-touch overstatement", f"{overstate:.1f}×", f"{T['conv_t']:,} vs ≈{INC['point']:,.0f}")
+kpi(n3, "Last-touch overstatement", f"{overstate:.1f}×", f"95% CI {over_ci[0]:.1f}–{over_ci[1]:.1f}×",
+    help=f"Last-touch attribution would credit all {T['conv_t']:,} ad-arm conversions to the campaign, against "
+         f"≈{INC['point']:,.0f} the ads caused. Every ad-group user saw at least one ad, so last-touch and any-touch "
+         "attribution coincide here.")
 kpi(n4, "Breakeven CPM", usd(be["point"]), f"95% CI {be['ci_low']:.2f} to {be['ci_high']:.2f}",
     help="The most you can pay per 1,000 ad impressions (USD) and still get back at least the incremental value, "
          "at the value per conversion entered above.")
 st.caption(f"Incremental conversions = absolute lift × the {T['n_t']:,} users in the ad arm: conversions that would "
            f"not have happened without the ads. They are {share_inc:.0%} of the {T['conv_t']:,} ad-arm conversions "
-           "(= 1 − 1/RR); the rest would have happened anyway, as the PSA rate shows. Last-touch attribution would "
-           f"credit all {T['conv_t']:,} to the campaign, {overstate:.1f}× what it caused.")
+           "(= 1 − 1/RR); the rest would have happened anyway, as the PSA rate shows. Last-touch (any-touch) "
+           f"attribution would credit all {T['conv_t']:,} to the campaign, {over_txt} what the ads caused: every "
+           "ad-group user saw at least one ad, so the two rules coincide here.")
 
 fig_be = F.fig_breakeven(INC["point"], INC["ci_low"], INC["ci_high"], IMPRESSIONS, value, cpm,
                          "Breakeven CPM by value per conversion (USD)", value_max=max(150.0, value * 1.5))
@@ -451,16 +472,29 @@ hold = o1.slider("PSA holdout (% of users)", 1, 20, int(round(HOLDOUT0 * 100)), 
 users_h = N_TOTAL * hold
 lost = {"point": users_h * (P_T - P_C), "ci_low": users_h * T["abs_ci_low"], "ci_high": users_h * T["abs_ci_high"]}
 mde_h = S.mde(P_C, N_TOTAL - int(round(users_h)), int(round(users_h)), ALPHA0, POWER0)["mde_abs"]
+# this test's own PSA arm already gives up conversions; the holdout's extra cost is the step from it
+asrun_share = T["n_c"] / N_TOTAL
+asrun_lost = T["n_c"] * (P_T - P_C)
+step = lost["point"] - asrun_lost
+asrun_label = f"this test's {asrun_share:.0%} PSA arm"
+if abs(step) < 0.5:
+    step_txt = f"about the same as {asrun_label} already forgoes (≈{asrun_lost:,.0f})"
+elif step > 0:
+    step_txt = (f"{asrun_label} already forgoes ≈{asrun_lost:,.0f}, so the step from {asrun_share:.0%} to "
+                f"{hold:.0%} costs ≈{step:,.0f} more")
+else:
+    step_txt = f"≈{-step:,.0f} fewer than {asrun_label} already forgoes (≈{asrun_lost:,.0f})"
 kpi(o2, "Users held out", f"{users_h / 1e3:,.1f}K", f"{hold:.0%} of {N_TOTAL / 1e3:,.0f}K per flight")
 kpi(o3, "Conversions forgone", f"≈{lost['point']:,.0f}", f"95% CI {lost['ci_low']:,.0f} to {lost['ci_high']:,.0f}",
-    help="Held-out users × the measured lift: conversions the ads would have caused among them.")
+    help=f"Held-out users × the measured lift: conversions the ads would have caused among them, against no "
+         f"holdout. For comparison, {asrun_label} already forgoes ≈{asrun_lost:,.0f}.")
 kpi(o4, "Value forgone", usd_k(lost["point"] * value, 1), f"{usd_input(value)} each, assumed")
 takeaway(f"A {hold:.0%} holdout keeps {users_h / 1e3:,.1f}K of every {N_TOTAL / 1e3:,.0f}K users on the PSA and gives "
-         f"up ≈{lost['point']:,.0f} conversions per comparable flight (≈{usd_k(lost['point'] * value, 1)} at "
-         f"{usd_input(value)} each). In return the team keeps a running causal read: with {POWER0:.0%} power it can "
-         f"detect a lift of {mde_h * 100:.2f} pp (this test's {1 - SHARE0:.0%} PSA arm: "
-         f"{PW['mde_current']['mde_abs'] * 100:.2f} pp). Without a holdout, reporting falls back on last-touch "
-         f"attribution, which would credit the campaign {overstate:.1f}× what it caused.")
+         f"up ≈{lost['point']:,.0f} conversions per comparable flight versus no holdout "
+         f"(≈{usd_k(lost['point'] * value, 1)} at {usd_input(value)} each); {step_txt}. In return the team keeps a "
+         f"running causal read: with {POWER0:.0%} power it can detect a lift of {mde_h * 100:.2f} pp (this test's "
+         f"{1 - SHARE0:.0%} PSA arm: {PW['mde_current']['mde_abs'] * 100:.2f} pp). Without a holdout, reporting falls "
+         f"back on last-touch attribution, which would overstate the campaign {over_txt}.")
 
 # ---------------------------------------------------------------- 6. risks
 st.subheader("6 · Risks and caveats")
@@ -474,10 +508,11 @@ risks = [
     "lift as an average over an unknown window; logging assignment timestamps is part of R4.",
     f"<b>The sample-ratio check cannot fail here.</b> The ad arm has {SRM['n_t']:,} users, the nearest whole number to "
     f"exactly {SHARE0:.0%} of {N_TOTAL:,} ({SRM['deviation_users']:.2f} users off). Random assignment would typically "
-    f"miss by about {SRM['sd_users_under_random_assignment']:.0f} users, and landing this close happens about "
-    f"{SRM['prob_exactly_nearest_integer']:.2%} of the time. So the split was set by a quota, or the export was "
-    f"trimmed to it, and the SRM test passes by construction (p = {p_text(SRM['p_value'])}). It is reported as "
-    "uninformative, not as a pass.",
+    f"miss by about ±{SRM['sd_users_under_random_assignment']:.0f} users, and landing on the nearest whole number "
+    f"happens about {SRM['prob_exactly_nearest_integer']:.2%} of the time. So the split was most likely a fixed "
+    "quota (or a trimmed export). Fixed arm sizes are a valid design; they just make the SRM test uninformative "
+    f"(p = {p_text(SRM['p_value'])} by construction), so it is reported as uninformative, not as a pass. Exposure "
+    "parity, next, is the meaningful check.",
     f"<b>Exposure parity is the meaningful check, and it is close but not exact.</b> Mean ads per user match "
     f"({g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f}), but the shapes differ a little: "
     f"{shares['1-5']['psa']:.0%} of PSA vs {shares['1-5']['ad']:.0%} of ad users saw 1–5 ads, and "
@@ -505,19 +540,27 @@ with st.container(border=True):
         + (", and its interval excludes 0 under every method and confidence level on this page" if robust else "")
         + f": ≈{INC['point']:,.0f} incremental conversions per comparable flight.\n\n"
         f"- **R1 · Growth PM:** keep a {HOLDOUT0:.0%} PSA holdout running (≈{HOLD['conversions_forgone']:,.0f} "
-        f"conversions forgone per {N_TOTAL / 1e3:,.0f}K-user flight, ≈{usd_k(HOLD['value_forgone_usd'], 1)} at the "
-        f"assumed {usd(VALUE0, 0)}) and report incremental conversions and cost per incremental conversion, not "
-        f"last-touch conversions, which would overstate the campaign {overstate:.1f}×. Confirm with Finance that the "
-        f"CPM we pay is below breakeven (≈{usd(BZ['breakeven_cpm_usd']['point'])} at an assumed {usd(VALUE0, 0)} "
-        "per conversion).\n"
-        "- **R2 · Growth PM + media buyer:** do not double the budget on this evidence. The test compared ads with "
+        f"conversions forgone per {N_TOTAL / 1e3:,.0f}K-user flight versus no holdout, "
+        f"≈{usd_k(HOLD['value_forgone_usd'], 1)} at the assumed {usd(VALUE0, 0)}; this test's "
+        f"{HOLD['as_run_control_share']:.0%} PSA arm already forgoes "
+        f"≈{HOLD['as_run_control_conversions_forgone']:,.0f}, so the step to {HOLDOUT0:.0%} costs "
+        f"≈{HOLD['extra_conversions_vs_as_run']:,.0f} more) and report incremental "
+        "conversions and cost per incremental conversion, not last-touch conversions, which would overstate the "
+        f"campaign {over_txt}. Confirm with Finance that the CPM we pay is below breakeven "
+        f"(≈{usd(BZ['breakeven_cpm_usd']['point'])} at an assumed {usd(VALUE0, 0)} per conversion, "
+        f"{usd(BZ['breakeven_cpm_usd']['ci_low'])} at the pessimistic end). One flight's holdout read is about as "
+        "precise as this test, so judge trends over several flights.\n"
+        "- **R2 · Growth PM + media buyer:** don't double the budget blindly; test it. This test compared ads with "
         "PSAs at one spend level, so it cannot say what extra spend buys, and the lift lives in heavy users "
-        "(page 5). Run randomized 2× budget or frequency-cap arms (50/50 or 80/20 split, sized with the page-7 "
-        "calculator) and read out marginal incremental conversions per extra USD 1,000.\n"
+        "(page 5). Run a user-level test where one arm gets up to 2× today's impressions per user (the closest "
+        "stand-in for 2× budget) or a frequency cap, split 50/50 or 80/20, with users tiered by activity measured "
+        "*before* the test (a true budget test needs a geo split). Read out incremental conversions per extra "
+        "USD 1K spent (marginal iROAS).\n"
         f"- **R4 · Analytics + Eng:** next time use a 50/50 or 80/20 split instead of {SPLIT0} (at {SPLIT0} this "
-        f"test had only {sesoi0['power_current_split']:.0%} power for a {SESOI0:.0%} lift), log assignment "
-        "timestamps, pre-register the primary metric and guardrails (unsubscribe / complaint rate, CPA), and "
-        "monitor the sample ratio while the test runs.")
+        f"test had only {sesoi0['power_current_split']:.0%} power for a {SESOI0:.0%} lift, against "
+        f"{fmt_power(sesoi0['power_5050_same_total'])} for the same users at 50/50), log assignment timestamps, "
+        "pre-register the primary metric, the smallest lift worth acting on and guardrails (unsubscribe / "
+        "complaint rate, CPA), and run an automatic daily sample-ratio check.")
 
 mde_ratio = PW["mde_current"]["mde_abs"] / PW["mde_if_5050_same_total"]["mde_abs"]
 how_to_read(f"""
@@ -544,8 +587,9 @@ a fluke of this particular sample.
 
 **Power and MDE.** Power is the chance the test catches a true effect of a given size. The MDE (minimum detectable
 effect) is the smallest effect it catches with the chosen power, {POWER0:.0%} by default. Both describe the *design*,
-so they are judged at the smallest lift worth acting on (the orange dotted line, {SESOI0:.0%} relative by default),
-not at the lift we observed: "power at the observed effect" only restates the p-value. With a {SPLIT0} split the small
+so they are judged at the smallest lift worth acting on (the orange dotted line, {SESOI0:.0%} relative by default, a
+placeholder in config.yaml that the PM and Finance would agree before launch), not at the lift we observed: "power at
+the observed effect" only restates the p-value. With a {SPLIT0} split the small
 PSA group sets the noise level; the same users split 50/50 could detect an effect about {mde_ratio:.1f}× smaller.
 Use this to size a test *before* running it, not to explain away a result afterwards.
 
@@ -556,18 +600,28 @@ below the line, the campaign pays back.
 
 **Holdout cost.** An always-on holdout keeps a small share of users on the PSA so the campaign's incremental effect
 stays measurable. Its cost is the conversions those users would have gained from the ads; the slider shows how cost
-and measurement precision trade off.
+and measurement precision trade off. This test already held out {T['n_c'] / N_TOTAL:.0%} of users, so only the step
+beyond that is a new cost.
 
 **Common misreadings.**
 - "A {T['rel_lift']:.0%} lift means {T['rel_lift']:.0%} more revenue." No: it is relative to a small base rate, and
   the value per conversion is assumed.
 - "All {T['conv_t']:,} ad-arm conversions came from the ads." No: the PSA rate says about
   {1 - share_inc:.0%} would have happened anyway. That is why last-touch attribution would overstate the campaign
-  {overstate:.1f}×.
+  {over_txt}.
 - "Significant, so double the budget." This test compared ads with PSAs at one spend level. It says nothing about
-  what the next dollar buys, which is what R2's budget test is for.
-- "The SRM check passed, so assignment is fine." Here it passes by construction (the split is quota-exact); exposure
-  parity is the check that carries information.
+  what the next USD 1K buys, which is what R2's test is for.
+- "The SRM check passed, so assignment is fine." The split is most likely a fixed quota (a valid design), so the check
+  passes by construction; exposure parity is the check that carries information.
 - "p < 0.0001 means a big effect." It means the effect is very unlikely to be zero. The interval shows how big it is.
 - "The effect will last." With no timestamps we cannot check whether it fades over time (novelty effect).
 """)
+
+# ---------------------------------------------------------------- phones
+# A wide markdown table scrolls inside itself instead of pushing the whole page sideways; the metrics
+# table's definition and result columns are prose, so they keep a readable width.
+st.markdown("<style>@media (max-width: 640px) {"
+            "[data-testid='stMarkdownContainer'] table {display: block; overflow-x: auto; max-width: 100%;}"
+            "[data-testid='stMarkdownContainer'] th, [data-testid='stMarkdownContainer'] td {min-width: 4.5rem;}"
+            "[data-testid='stMarkdownContainer'] td:nth-child(n+3) {min-width: 11rem;}"
+            "}</style>", unsafe_allow_html=True)

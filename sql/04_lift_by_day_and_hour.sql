@@ -25,13 +25,15 @@
 --             rel_lift                      rate_ad / rate_psa - 1 (NULL if the PSA cell has 0 conversions)
 --             z_stat                        pooled two-proportion z statistic: is the lift != 0 here?
 --             lift_significant_unadjusted   |z_stat| > 1.96, with NO multiple-comparison correction
---             incremental_conversions       abs_lift * users_ad
+--             incremental_conversions       abs_lift * users_ad: each segment against its own PSA rate
 --             lift_rest                     lift among all OTHER segments of the dimension
---             diff_vs_rest                  segment lift minus rest lift, on Agresti-Caffo adjusted
---                                           proportions ((conversions + 1) / (users + 2) in each of
---                                           the four groups)
---             diff_vs_rest_ci95_low, _high  95% Wald CI for diff_vs_rest
---             z_vs_rest                     diff_vs_rest / its standard error
+--             diff_vs_rest                  abs_lift - lift_rest: the raw difference between the
+--                                           segment's lift and the other segments' lift (point estimate)
+--             diff_vs_rest_ac               the same difference on Agresti-Caffo adjusted proportions
+--                                           ((conversions + 1) / (users + 2) in each of the four
+--                                           groups): the centre of the CI and of the test
+--             diff_vs_rest_ci95_low, _high  95% Agresti-Caffo CI: diff_vs_rest_ac +/- 1.96 x its SE
+--             z_vs_rest                     diff_vs_rest_ac / its standard error
 --             differs_from_rest_unadjusted  |z_vs_rest| > 1.96, with NO multiple-comparison correction
 --             standardized_lift             Mantel-Haenszel weighted average of the segment lifts
 --                                           (one value per dimension, repeated on its rows)
@@ -51,19 +53,30 @@
 --             likelihood-ratio test per dimension, Holm / Bonferroni / BH adjustment
 --             and the Newcombe CIs are in src/stats.py and reports/tables/ad_lift_by_*.csv
 --             (DuckDB has no normal CDF for p-values).
---           - Agresti-Caffo adjustment keeps cells with 0 PSA conversions (several
---             night hours) from getting a zero variance and a spurious contrast. It is
---             why diff_vs_rest is close to, but not exactly, abs_lift - lift_rest.
---           - Peak day / hour describe the user's habits, not a slot the media plan
---             bought; a pattern here is a hypothesis for a daypart test, not a
---             reallocation rule.
+--           - Point estimate vs interval: diff_vs_rest is the raw difference; its CI
+--             and z_vs_rest use the Agresti-Caffo adjustment, which keeps cells with
+--             0 PSA conversions (6 hours: 0-2 and 4-6, mostly night) from getting a
+--             zero variance and a spurious contrast. In sparse cells the CI is
+--             therefore not centred on diff_vs_rest (its centre is diff_vs_rest_ac);
+--             in large cells the two differ very little. Same convention as
+--             src/stats.py segment_lifts and reports/tables/ad_lift_by_*.csv.
+--           - Peak day / hour describe the user's habits, recorded after
+--             assignment, not a slot the media plan bought. A pattern here is a
+--             hypothesis for a pre-registered test that randomizes the delivery
+--             schedule (weekday and time slot), not a reason to re-plan spend.
 --           - standardized_lift is a sensitivity check on post-assignment strata:
 --             if it stays close to the crude lift in 02_conversion_by_group.sql for
 --             every dimension, the segment mix does not explain the headline (no
 --             Simpson's reversal).
 --           - In exposure buckets, control conversion rises steeply with exposure:
 --             exposure tracks how active a user is, so the bucket pattern says where
---             the lift lives, not what an extra ad does.
+--             the lift lives, not what an extra ad does (no frequency curve).
+--           - Bucket-by-bucket incremental conversions use each bucket's own PSA
+--             rate, so their sum differs from the headline incremental_conversions
+--             in 02_conversion_by_group.sql, and the lowest buckets can be negative.
+--             Pooled, buckets 1-5, 6-10 and 11-20 are the users with 20 ads or
+--             fewer (results.json le_20_ads_pooled); that pooled test and its MDE
+--             are Python-only.
 -- =============================================================================
 
 WITH params AS (
@@ -209,7 +222,8 @@ segment_stats AS (
         conversion_rate_ad / NULLIF(conversion_rate_psa, 0) - 1 AS rel_lift,
         (conversion_rate_ad - conversion_rate_psa)
             / SQRT(pooled_rate * (1 - pooled_rate) * (1.0 / users_ad + 1.0 / users_psa)) AS z_stat,
-        (ac_rate_ad - ac_rate_psa) - (ac_rate_rest_ad - ac_rate_rest_psa)                AS diff_vs_rest,
+        conversion_rate_ad - conversion_rate_psa - lift_rest                             AS diff_vs_rest,
+        (ac_rate_ad - ac_rate_psa) - (ac_rate_rest_ad - ac_rate_rest_psa)                AS diff_vs_rest_ac,
         SQRT(ac_rate_ad       * (1 - ac_rate_ad)       / (users_ad + 2)
            + ac_rate_psa      * (1 - ac_rate_psa)      / (users_psa + 2)
            + ac_rate_rest_ad  * (1 - ac_rate_rest_ad)  / (rest_users_ad + 2)
@@ -237,10 +251,11 @@ SELECT
     s.abs_lift * s.users_ad                              AS incremental_conversions,
     s.lift_rest,
     s.diff_vs_rest,
-    s.diff_vs_rest - p.z_crit_95 * s.se_vs_rest          AS diff_vs_rest_ci95_low,
-    s.diff_vs_rest + p.z_crit_95 * s.se_vs_rest          AS diff_vs_rest_ci95_high,
-    s.diff_vs_rest / s.se_vs_rest                        AS z_vs_rest,
-    ABS(s.diff_vs_rest / s.se_vs_rest) > p.z_crit_95     AS differs_from_rest_unadjusted,
+    s.diff_vs_rest_ac,
+    s.diff_vs_rest_ac - p.z_crit_95 * s.se_vs_rest       AS diff_vs_rest_ci95_low,
+    s.diff_vs_rest_ac + p.z_crit_95 * s.se_vs_rest       AS diff_vs_rest_ci95_high,
+    s.diff_vs_rest_ac / s.se_vs_rest                     AS z_vs_rest,
+    ABS(s.diff_vs_rest_ac / s.se_vs_rest) > p.z_crit_95  AS differs_from_rest_unadjusted,
     SUM(s.mh_weight * s.abs_lift) OVER (PARTITION BY s.dimension)
         / SUM(s.mh_weight) OVER (PARTITION BY s.dimension) AS standardized_lift
 FROM segment_stats AS s

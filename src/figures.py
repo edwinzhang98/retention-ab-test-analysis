@@ -55,19 +55,22 @@ def wrap(text: str, width: int = 118) -> str:
 
 def _layout(fig: go.Figure, title: str, subtitle: str | None = None, height: int = 420,
             xaxis_title: str | None = None, yaxis_title: str | None = None, legend: bool = True) -> go.Figure:
-    t = f"<b>{esc(title)}</b>"
+    title_html = wrap(esc(title), 72)
+    extra_title_lines = title_html.count("<br>")
+    t = f"<b>{title_html}</b>"
     n_sub_lines = 0
     if subtitle:
         sub = wrap(esc(subtitle))
         n_sub_lines = sub.count("<br>") + 1
         t += f"<br><span style='font-size:13px;color:{INK_2}'>{sub}</span>"
-    top = 58 + 19 * n_sub_lines
+    top = 58 + 21 * extra_title_lines + 19 * n_sub_lines
     fig.update_layout(
         title=dict(text=t, x=0, xanchor="left", xref="container", y=1, yref="container", yanchor="top",
                    pad=dict(t=14, l=12), font=dict(size=16, color=INK)),
         font=dict(family=FONT, size=13, color=INK),
         paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
-        height=height + 19 * max(0, n_sub_lines - 1), margin=dict(l=64, r=28, t=top, b=100 if legend else 60),
+        height=height + 21 * extra_title_lines + 19 * max(0, n_sub_lines - 1),
+        margin=dict(l=64, r=28, t=top, b=100 if legend else 60),
         hoverlabel=dict(bgcolor="white", font=dict(family=FONT, size=12, color=INK), bordercolor=GRID),
         showlegend=legend,
         legend=dict(orientation="h", yref="container", yanchor="bottom", y=0.01, xanchor="left", x=0.01,
@@ -87,6 +90,20 @@ apply_layout = _layout  # public name for one-off charts (notebooks) in the hous
 
 def _pct(x):
     return np.asarray(x, dtype=float) * 100
+
+
+def p_hover(p) -> str:
+    """p-value for hover text: '= 0.013', '< 0.0001', '> 0.99'; never prints 0."""
+    if p is None or pd.isna(p):
+        return "n/a"
+    p = float(p)
+    if p < 0.0001:
+        return "< 0.0001"
+    if p < 0.001:
+        return f"= {p:.4f}"
+    if p > 0.99:
+        return "> 0.99"
+    return f"= {p:.2g}"
 
 
 # ================================================================== experiments
@@ -183,15 +200,16 @@ def fig_lift_forest(tab: pd.DataFrame, seg_col: str, title: str, subtitle: str |
             marker=dict(color=color, size=10, symbol=symbol, line=dict(width=2, color=color)),
             error_x=dict(type="data", symmetric=False, array=(hi - _pct(t["abs_lift"]))[idx],
                          arrayminus=(_pct(t["abs_lift"]) - lo)[idx], color=color, thickness=1.5, width=0),
-            customdata=np.stack([t["rate_t"].to_numpy()[idx] * 100, t["rate_c"].to_numpy()[idx] * 100,
-                                 t["n_t"].to_numpy()[idx], t["n_c"].to_numpy()[idx], t["p_adj"].to_numpy()[idx],
-                                 diff_rest[idx], p_rest[idx], lo[idx], hi[idx]], axis=1),
+            customdata=[[float(t["rate_t"].iloc[i]) * 100, float(t["rate_c"].iloc[i]) * 100, float(t["n_t"].iloc[i]),
+                         float(t["n_c"].iloc[i]), p_hover(t["p_adj"].iloc[i]), float(diff_rest[i]), p_hover(p_rest[i]),
+                         float(lo[i]), float(hi[i])] for i in idx],
             hovertemplate="<b>%{y}</b><br>Lift %{x:.2f} pp (95% CI %{customdata[7]:.2f} to %{customdata[8]:.2f})"
                           "<br>Treatment %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
                           "<br>Control %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
-                          "<br>Lift ≠ 0: adjusted p = %{customdata[4]:.4f}"
-                          "<br>vs other segments: %{customdata[5]:+.2f} pp, adjusted p = %{customdata[6]:.4f}"
-                          "<extra></extra>",
+                          "<br>Lift ≠ 0: adjusted p %{customdata[4]}"
+                          + ("<br>vs other segments: %{customdata[5]:+.2f} pp, adjusted p %{customdata[6]}"
+                             if has_rest else "")
+                          + "<extra></extra>",
         )
     fig.add_vline(x=0, line=dict(color=INK_2, width=1))
     if overall_lift is not None:
@@ -261,10 +279,11 @@ def fig_mde_by_split(p_c: float, total_n: int, current_share: float, reference_l
                     marker=dict(color=BLUE, size=11, line=dict(color=SURFACE, width=2)),
                     text=[f"{current_share*100:.0f}/{(1-current_share)*100:.0f}: {cur*100:.2f} pp"],
                     textposition="top left", textfont=dict(color=INK), hoverinfo="skip")
-    fig.add_scatter(x=[50], y=[half * 100], mode="markers+text", name="50/50 split",
-                    marker=dict(color=GREY, size=10, line=dict(color=SURFACE, width=2)),
-                    text=[f"50/50: {half*100:.2f} pp"], textposition="top right", textfont=dict(color=INK_2),
-                    hoverinfo="skip")
+    if abs(current_share - 0.5) > 1e-9:  # at 50/50 the selected point already carries the label
+        fig.add_scatter(x=[50], y=[half * 100], mode="markers+text", name="50/50 split",
+                        marker=dict(color=GREY, size=10, line=dict(color=SURFACE, width=2)),
+                        text=[f"50/50: {half*100:.2f} pp"], textposition="top right", textfont=dict(color=INK_2),
+                        hoverinfo="skip")
     if reference_lift is not None:
         fig.add_hline(y=reference_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
         fig.add_annotation(x=52, y=reference_lift * 100, text=f"{reference_label}: {reference_lift*100:.2f} pp",
@@ -282,7 +301,7 @@ def fig_power_curve(p_c: float, n_t: int, n_c: int, alpha: float, reference_lift
     """Probability of detecting a true lift of a given size with this sample
     (a design property; never evaluated at the observed effect)."""
     lifts = np.linspace(0.0005, max_lift_pp / 100, 120)
-    pw = [S.achieved_power(p_c, p_c + l, n_t, n_c, alpha) for l in lifts]
+    pw = [S.power_at_lift(p_c, p_c + l, n_t, n_c, alpha) for l in lifts]
     fig = go.Figure()
     fig.add_scatter(x=lifts * 100, y=np.array(pw) * 100, mode="lines", line=dict(color=BLUE, width=2),
                     name="Power", hovertemplate="True lift %{x:.2f} pp<br>Power %{y:.0f}%<extra></extra>")
@@ -290,11 +309,12 @@ def fig_power_curve(p_c: float, n_t: int, n_c: int, alpha: float, reference_lift
     fig.add_annotation(x=max_lift_pp, y=target_power * 100, text=f"{target_power*100:.0f}% target",
                        showarrow=False, yanchor="bottom", xanchor="right", font=dict(size=11, color=INK_2))
     if reference_lift is not None and reference_lift * 100 <= max_lift_pp:
-        pw_ref = S.achieved_power(p_c, p_c + reference_lift, n_t, n_c, alpha)
+        pw_ref = S.power_at_lift(p_c, p_c + reference_lift, n_t, n_c, alpha)
         fig.add_vline(x=reference_lift * 100, line=dict(color=ORANGE, width=1.5, dash="dot"))
-        fig.add_annotation(x=reference_lift * 100, y=5,
-                           text=f"{reference_label}: {reference_lift*100:.2f} pp → power {pw_ref*100:.0f}%",
-                           showarrow=False, xanchor="left", xshift=4, font=dict(size=11, color=ORANGE))
+        fig.add_annotation(x=reference_lift * 100, y=4,
+                           text=f"{reference_label}:<br>{reference_lift*100:.2f} pp → power {pw_ref*100:.0f}%",
+                           showarrow=False, xanchor="left", yanchor="bottom", align="left", xshift=4,
+                           font=dict(size=11, color=ORANGE))
     _layout(fig, title, subtitle, height=height, xaxis_title="True lift in conversion rate (pp)",
             yaxis_title="Power: chance of detecting it (%)", legend=False)
     fig.update_yaxes(range=[0, 102])
@@ -313,7 +333,7 @@ def fig_breakeven(incr_point: float, incr_low: float, incr_high: float, impressi
                     fill="toself", fillcolor="rgba(42,120,214,0.12)", line=dict(width=0), hoverinfo="skip",
                     name="95% CI")
     fig.add_scatter(x=v, y=f(incr_point), mode="lines", line=dict(color=BLUE, width=2), name="Breakeven CPM",
-                    hovertemplate="Value/conversion &#36;%{x:.0f}<br>Breakeven CPM &#36;%{y:.2f}<extra></extra>")
+                    hovertemplate="Value/conversion USD %{x:.0f}<br>Breakeven CPM USD %{y:.2f}<extra></extra>")
     be = incr_point * value_selected / impressions * 1000
     fig.add_scatter(x=[value_selected], y=[be], mode="markers+text", marker=dict(color=BLUE, size=11,
                     line=dict(color=SURFACE, width=2)), text=[f"USD {value_selected:.0f} → USD {be:.2f} CPM"],
@@ -501,17 +521,17 @@ def fig_effect_by_stratum(rows: pd.DataFrame, title: str, subtitle: str | None =
             marker=dict(color=color, size=11, symbol=symbol, line=dict(width=2, color=color)),
             error_x=dict(type="data", symmetric=False, array=[(r["abs_ci_high"] - r["abs_lift"]) * 100],
                          arrayminus=[(r["abs_lift"] - r["abs_ci_low"]) * 100], color=color, thickness=1.5, width=0),
-            customdata=[[r["rate_t"] * 100, r["rate_c"] * 100, r["n_t"], r["n_c"], r["p_value"],
+            customdata=[[r["rate_t"] * 100, r["rate_c"] * 100, r["n_t"], r["n_c"], p_hover(r["p_value"]),
                          r["abs_ci_low"] * 100, r["abs_ci_high"] * 100]],
             hovertemplate="<b>%{y}</b><br>Difference %{x:.2f} pp (95% CI %{customdata[5]:.2f} to %{customdata[6]:.2f})"
                           "<br>gate_40 %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
                           "<br>gate_30 %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
-                          "<br>p = %{customdata[4]:.3f}<extra></extra>")
+                          "<br>p %{customdata[4]}<extra></extra>")
     fig.add_vline(x=0, line=dict(color=INK_2, width=1))
     _layout(fig, title, subtitle, height=height, xaxis_title=xtitle, legend=False)
-    fig.update_yaxes(categoryorder="array", categoryarray=rows["label"].tolist()[::-1], showgrid=False, type="category")
+    fig.update_yaxes(categoryorder="array", categoryarray=rows["label"].tolist()[::-1], showgrid=False, type="category",
+                     automargin=True)
     fig.update_xaxes(showgrid=True, gridcolor=GRID)
-    fig.update_layout(margin=dict(l=260))
     return fig
 
 
@@ -519,8 +539,10 @@ def fig_gap_decomposition(parts: pd.DataFrame, title: str, subtitle: str | None 
                           xtitle: str = "Contribution to the gate_40 − gate_30 D7 gap (pp of installs)",
                           height: int = 330) -> go.Figure:
     """Horizontal bars that add up to the naive difference.
-    parts columns: label, value (proportion), role ('total' | 'artifact' | 'effect'), ci_low/ci_high (optional)."""
-    colors = {"total": INK_2, "artifact": GREY_LIGHT, "effect": BLUE}
+    parts columns: label, value (proportion), role ('total' | 'not_gate' | 'could_be_gate'), ci_low/ci_high
+    (optional). 'not_gate' = parts the gate cannot cause (imbalance or chance)."""
+    colors = {"total": INK_2, "not_gate": GREY_LIGHT, "could_be_gate": BLUE,
+              "artifact": GREY_LIGHT, "effect": BLUE}  # older role names
     fig = go.Figure()
     for _, r in parts.iterrows():
         err = None
@@ -529,19 +551,20 @@ def fig_gap_decomposition(parts: pd.DataFrame, title: str, subtitle: str | None 
                        arrayminus=[(r["value"] - r["ci_low"]) * 100], color=INK_2, thickness=1.5, width=6)
         fig.add_bar(y=[r["label"]], x=[r["value"] * 100], orientation="h", showlegend=False,
                     marker=dict(color=colors.get(r["role"], BLUE), cornerradius=3), error_x=err,
-                    text=None if err else [f"{r['value']*100:+.2f} pp"], textposition="outside", cliponaxis=False,
+                    text=None if err else [f"{r['value']*100:+.2f} pp".replace("-", "−")], textposition="outside", cliponaxis=False,
                     textfont=dict(color=INK),
                     hovertemplate="%{y}: %{x:+.2f} pp<extra></extra>")
         if err:  # label left of the whisker so it never collides with the error bar
-            fig.add_annotation(y=r["label"], x=r["ci_low"] * 100, text=f"{r['value']*100:+.2f} pp", showarrow=False,
+            fig.add_annotation(y=r["label"], x=r["ci_low"] * 100, text=f"{r['value']*100:+.2f} pp".replace("-", "−"), showarrow=False,
                                xanchor="right", xshift=-6, font=dict(color=INK))
     fig.add_vline(x=0, line=dict(color=INK_2, width=1))
     _layout(fig, title, subtitle, height=height, xaxis_title=xtitle, legend=False)
     fig.update_yaxes(categoryorder="array", categoryarray=parts["label"].tolist()[::-1], showgrid=False)
     lo = min(parts["value"].min(), parts.get("ci_low", parts["value"]).min()) * 100
-    fig.update_xaxes(range=[lo * 1.35, max(0.25, parts.get("ci_high", parts["value"]).max() * 100 + 0.2)],
+    fig.update_xaxes(range=[lo * 1.45, max(0.25, parts.get("ci_high", parts["value"]).max() * 100 + 0.2)],
                      showgrid=True, gridcolor=GRID)
-    fig.update_layout(margin=dict(l=330), bargap=0.45)
+    fig.update_yaxes(automargin=True)
+    fig.update_layout(margin=dict(l=12), bargap=0.45)
     return fig
 
 

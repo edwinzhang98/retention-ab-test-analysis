@@ -22,7 +22,7 @@ T, CTRL = "ad", "psa"
 G_T, G_C = "gate_40", "gate_30"
 
 
-def _r(x, nd=6):
+def _r(x, nd=8):
     """Round floats for JSON readability."""
     if isinstance(x, dict):
         return {k: _r(v, nd) for k, v in x.items()}
@@ -110,8 +110,8 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     mde_5050 = S.mde(p_c, (nt + nc) // 2, (nt + nc) // 2, C.ALPHA, C.POWER)
     half = (nt + nc) // 2
     power_at = {str(rel): {"rel": rel, "abs": rel * p_c,
-                           "power_current_split": S.achieved_power(p_c, p_c * (1 + rel), nt, nc, C.ALPHA),
-                           "power_5050_same_total": S.achieved_power(p_c, p_c * (1 + rel), half, half, C.ALPHA)}
+                           "power_current_split": S.power_at_lift(p_c, p_c * (1 + rel), nt, nc, C.ALPHA),
+                           "power_5050_same_total": S.power_at_lift(p_c, p_c * (1 + rel), half, half, C.ALPHA)}
                 for rel in (0.05, C.SESOI_REL, 0.20)}
     n_needed_9604 = S.required_total_n(p_c, mde_now["mde_abs"], C.INTENDED_AD_SHARE, C.ALPHA, C.POWER)
     n_needed_5050 = S.required_total_n(p_c, mde_now["mde_abs"], 0.5, C.ALPHA, C.POWER)
@@ -129,7 +129,11 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     holdout = {"share": C.HOLDOUT_SHARE,
                "users_per_588k_flight": (nt + nc) * C.HOLDOUT_SHARE,
                "conversions_forgone": (nt + nc) * C.HOLDOUT_SHARE * res.abs_lift,
-               "value_forgone_usd": (nt + nc) * C.HOLDOUT_SHARE * res.abs_lift * v}
+               "value_forgone_usd": (nt + nc) * C.HOLDOUT_SHARE * res.abs_lift * v,
+               # the experiment as run already held out its PSA arm (4%), so most of this cost is paid today
+               "as_run_control_share": nc / (nt + nc),
+               "as_run_control_conversions_forgone": nc * res.abs_lift,
+               "extra_conversions_vs_as_run": ((nt + nc) * C.HOLDOUT_SHARE - nc) * res.abs_lift}
 
     # heterogeneity: one omnibus interaction test per dimension, then segment-vs-rest
     # contrasts (the heterogeneity question) and per-segment lifts (descriptive)
@@ -165,13 +169,29 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
     seg["daypart"]["night_counts"] = {g: {"users": int(r.users), "conversions": int(r.conversions)}
                                       for g, r in night.iterrows()}
     expo = S.segment_lifts(cells, "exposure_bucket", T, CTRL, alpha=C.ALPHA, order=C.EXPOSURE_LABELS)
+    # Bucket-by-bucket incremental conversions: (rate_ad,b - rate_psa,b) * n_ad,b. Each bucket uses its own
+    # PSA rate, so the total (about 4.5K) differs from the headline 4.3K; low buckets are slightly negative.
     expo["incremental_conversions"] = expo["abs_lift"] * expo["n_t"]
     heavy = expo["exposure_bucket"].astype(str).isin(["36-50", "51-100", "101-200"])
+    le20 = m[m["total_ads"] <= 20].groupby("test_group")["converted"].agg(["sum", "size"])
+    le20_res = S.two_prop_test(le20.loc[T, "sum"], le20.loc[T, "size"], le20.loc[CTRL, "sum"], le20.loc[CTRL, "size"],
+                               alpha=C.ALPHA)
+    le20_mde = S.mde(le20_res.rate_c, le20_res.n_t, le20_res.n_c, C.ALPHA, C.POWER)
+    b2135 = expo[expo["exposure_bucket"].astype(str) == "21-35"].iloc[0]
     seg["exposure_bucket"]["concentration"] = {
-        "share_users_le_20_ads": float((m["total_ads"] <= 20).mean()),
-        "share_ad_users_36_200": float(expo.loc[heavy, "n_t"].sum() / expo["n_t"].sum()),
+        "share_users_le_20_ads": float((m["total_ads"] <= 20).mean()),              # of all 588K users
+        "share_ad_users_le_20_ads": float((m.loc[m.test_group == T, "total_ads"] <= 20).mean()),
+        "share_ad_users_36_200": float(expo.loc[heavy, "n_t"].sum() / expo["n_t"].sum()),   # of ad users
+        "incremental_conversions_bucketwise_total": float(expo["incremental_conversions"].sum()),
+        "incremental_conversions_36_200": float(expo.loc[heavy, "incremental_conversions"].sum()),
+        "incremental_conversions_by_bucket": {str(b): float(x) for b, x in
+                                              zip(expo["exposure_bucket"], expo["incremental_conversions"])},
         "share_incremental_conversions_36_200": float(expo.loc[heavy, "incremental_conversions"].sum()
                                                       / expo["incremental_conversions"].sum()),
+        "le_20_ads_pooled": {**le20_res.to_dict(), "mde_abs": le20_mde["mde_abs"], "mde_rel": le20_mde["mde_rel"]},
+        "bucket_21_35": {"abs_lift": float(b2135["abs_lift"]), "abs_ci_low": float(b2135["abs_ci_low"]),
+                         "abs_ci_high": float(b2135["abs_ci_high"]),
+                         "share_ad_users": float(b2135["n_t"] / expo["n_t"].sum())},
         "control_rate_lowest_bucket": float(expo["rate_c"].iloc[0]),
         "control_rate_highest_bucket": float(expo["rate_c"].iloc[-1]),
         "top_bucket_ci_pp": [float(expo["abs_ci_low"].iloc[-1] * 100), float(expo["abs_ci_high"].iloc[-1] * 100)],
@@ -201,7 +221,9 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
                      "incremental_value_usd": {k: x * v for k, x in incr.items()},
                      "breakeven_cpm_usd": breakeven_cpm, "share_of_ad_conversions_incremental": share_attributable,
                      "share_of_ad_conversions_incremental_ci": af_ci,
+                     # crediting every ad-arm conversion to the ads (last-touch / any-touch: every ad user saw >= 1 ad)
                      "last_touch_overstatement_x": ct / incr["point"],
+                     "last_touch_overstatement_ci": [1 / af_ci[1], 1 / af_ci[0]],
                      "always_on_holdout_cost": holdout},
         "heterogeneity": seg,
     }
@@ -248,72 +270,139 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
                       "winsor_cap_p999": cap, "winsor_mean_diff": float(rt.clip(upper=cap).mean() - rc.clip(upper=cap).mean()),
                       "winsor_mean_diff_boot_ci": list(S.percentile_ci(b_wins)), "n_boot": C.N_BOOT_MEANS}
 
-    # Negative control: players with < 30 rounds never reached level 30, so they never met
-    # either gate. Their retention should not differ by version if assignment was random.
-    strata = {}
-    for name, mask in (("never_reached_30", c["sum_gamerounds"] < 30), ("reached_30", c["sum_gamerounds"] >= 30)):
-        sub = c[mask]
-        st = {}
-        for key in ("retention_1", "retention_7"):
-            a, b_ = sub[sub.version == G_T], sub[sub.version == G_C]
-            st[key] = S.two_prop_test(a[key].sum(), len(a), b_[key].sum(), len(b_), alpha=C.ALPHA).to_dict()
-        strata[name] = st
-    gate["negative_control"] = strata
+    # Strata by rounds played. Both versions are identical below level 30 and rounds >= levels, so a
+    # player with < 30 rounds never met either gate. "30+ rounds" means "could have reached level 30"
+    # (approximate: there is no level field; a gate_30 player stopped by the gate after a flawless
+    # 29 rounds would sit just below 30, the opposite direction of gate_40's excess).
+    lt30, ge30 = c["sum_gamerounds"] < 30, c["sum_gamerounds"] >= 30
+    bands = {"rounds_lt_15": c["sum_gamerounds"] < 15,
+             "rounds_15_29": (c["sum_gamerounds"] >= 15) & lt30,
+             "rounds_ge_30": ge30}
+
+    def _by_version(mask, key):
+        a, b_ = c[mask & (c.version == G_T)], c[mask & (c.version == G_C)]
+        return S.two_prop_test(a[key].sum(), len(a), b_[key].sum(), len(b_), alpha=C.ALPHA).to_dict()
+
+    # Negative control: players who never met a gate should retain equally if assignment was random.
+    gate["negative_control"] = {name: {k: _by_version(mask, k) for k in ("retention_1", "retention_7")}
+                                for name, mask in (("never_reached_30", lt30), ("reached_30", ge30))}
+    gate["retention_by_rounds_band"] = {name: {k: _by_version(mask, k) for k in ("retention_1", "retention_7")}
+                                        for name, mask in bands.items()}
     gate["composition"] = {
         "zero_round_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] == 0).mean()) for v_ in (G_T, G_C)},
         "under_30_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] < 30).mean()) for v_ in (G_T, G_C)},
     }
-    # Where do gate_40's extra players sit? SRM within strata defined by pre-gate behaviour
-    # (raw assignment counts; rounds < 30 cannot be influenced by either gate).
+    # Where do gate_40's extra players sit? Arm sizes within rounds bands (raw assignment counts). These
+    # subsets were chosen after seeing the overall SRM warning, so the p-values are descriptive: no PASS/FAIL.
     raw_r = c_raw["sum_gamerounds"]
+    gate["excess_players_raw"] = int(raw_t - raw_c)
     gate["srm_by_stratum"] = {}
-    for name, mask in (("rounds_lt_15", raw_r < 15), ("rounds_lt_30", raw_r < 30), ("rounds_ge_30", raw_r >= 30)):
+    for name, mask in (("rounds_lt_15", raw_r < 15), ("rounds_15_29", (raw_r >= 15) & (raw_r < 30)),
+                       ("rounds_lt_30", raw_r < 30), ("rounds_ge_30", raw_r >= 30)):
         sub = c_raw[mask]
-        gate["srm_by_stratum"][name] = S.srm_check(int((sub.version == G_T).sum()), int((sub.version == G_C).sum()),
-                                                   C.INTENDED_GATE40_SHARE, C.SRM_FAIL_P, C.SRM_WARN_P)
-    excess_lt15 = gate["srm_by_stratum"]["rounds_lt_15"]["n_t"] - gate["srm_by_stratum"]["rounds_lt_15"]["n_c"]
-    gate["excess_players_with_lt_15_rounds"] = int(excess_lt15)
-    # Pre-gate engagement: play before round 30 is identical by design, so min(rounds, 29) should match
+        n_t_, n_c_ = int((sub.version == G_T).sum()), int((sub.version == G_C).sum())
+        chk = S.srm_check(n_t_, n_c_, C.INTENDED_GATE40_SHARE, C.SRM_FAIL_P, C.SRM_WARN_P)
+        gate["srm_by_stratum"][name] = {k: chk[k] for k in ("n_t", "n_c", "observed_share_t", "expected_t",
+                                                            "expected_c", "chi2", "p_value")}
+        gate["srm_by_stratum"][name]["net_excess_t"] = n_t_ - n_c_
+    gate["excess_players_with_lt_15_rounds"] = int(gate["srm_by_stratum"]["rounds_lt_15"]["net_excess_t"])
+    # Pre-gate engagement: play before round 30 is identical by design, so min(rounds, 29) should match.
+    # This is the same imbalance seen as a distribution, not independent evidence.
     pre_t, pre_c = rt.clip(upper=29), rc.clip(upper=29)
+    pre_lt30 = (c.loc[lt30 & (c.version == G_T), "sum_gamerounds"], c.loc[lt30 & (c.version == G_C), "sum_gamerounds"])
     gate["pre_gate_engagement"] = {"mean_capped_29_t": float(pre_t.mean()), "mean_capped_29_c": float(pre_c.mean()),
-                                   "mannwhitney_p": float(sps.mannwhitneyu(pre_t, pre_c).pvalue)}
-    # Decompose the D7 gap: within-stratum differences (weighted by the average mix) + composition
-    w = {}
-    for name, mask in (("never_reached_30", c["sum_gamerounds"] < 30), ("reached_30", c["sum_gamerounds"] >= 30)):
-        wt, wc_ = float(mask[c.version == G_T].mean()), float(mask[c.version == G_C].mean())
-        r_t = float(c.loc[mask & (c.version == G_T), "retention_7"].mean())
-        r_c = float(c.loc[mask & (c.version == G_C), "retention_7"].mean())
-        w[name] = {"w_t": wt, "w_c": wc_, "r_t": r_t, "r_c": r_c,
-                   "within": (wt + wc_) / 2 * (r_t - r_c), "composition": (wt - wc_) * (r_t + r_c) / 2}
-    reach = strata["reached_30"]["retention_7"]
-    w_reach = (w["reached_30"]["w_t"] + w["reached_30"]["w_c"]) / 2
-    n_reach = S.required_total_n(reach["rate_c"], reach["abs_lift"], 0.5, C.ALPHA, C.POWER)
-    gate["d7_decomposition"] = {
-        "naive_diff": gate["retention_7"]["abs_lift"],
-        "within_never_reached_30": w["never_reached_30"]["within"],
-        "within_reached_30": w["reached_30"]["within"],
-        "composition": w["never_reached_30"]["composition"] + w["reached_30"]["composition"],
-        "share_reached_30": w_reach,
-        # if only players who could meet the gate are affected, the install-level effect is:
-        "install_level_effect_if_only_reachers": w_reach * reach["abs_lift"],
-        "install_level_effect_ci_if_only_reachers": [w_reach * reach["abs_ci_low"], w_reach * reach["abs_ci_high"]],
-        "detail": w,
+                                   "mannwhitney_p": float(sps.mannwhitneyu(pre_t, pre_c).pvalue),
+                                   "mannwhitney_p_within_lt_30": float(sps.mannwhitneyu(*pre_lt30).pvalue)}
+
+    # Decompose the naive gap (D7 primary, D1 guardrail): within-stratum differences weighted by the
+    # average mix, plus composition. Exact, no residual (symmetric weights).
+    def _decompose(key):
+        w = {}
+        for name, mask in (("never_reached_30", lt30), ("reached_30", ge30)):
+            wt, wc_ = float(mask[c.version == G_T].mean()), float(mask[c.version == G_C].mean())
+            r_t = float(c.loc[mask & (c.version == G_T), key].mean())
+            r_c = float(c.loc[mask & (c.version == G_C), key].mean())
+            w[name] = {"w_t": wt, "w_c": wc_, "r_t": r_t, "r_c": r_c,
+                       "within": (wt + wc_) / 2 * (r_t - r_c), "composition": (wt - wc_) * (r_t + r_c) / 2}
+        reach_ = gate["negative_control"]["reached_30"][key]
+        w_reach_ = (w["reached_30"]["w_t"] + w["reached_30"]["w_c"]) / 2
+        return {
+            "naive_diff": gate[key]["abs_lift"],
+            "within_never_reached_30": w["never_reached_30"]["within"],
+            "within_reached_30": w["reached_30"]["within"],
+            "composition": w["never_reached_30"]["composition"] + w["reached_30"]["composition"],
+            "share_reached_30": w_reach_,
+            # the part the gate could explain: the reachers' gap, spread over all installs. An upper
+            # reading, not an estimate of the gate effect (players with 15-29 rounds show a similar gap).
+            "install_level_effect_if_only_reachers": w_reach_ * reach_["abs_lift"],
+            "install_level_effect_ci_if_only_reachers": [w_reach_ * reach_["abs_ci_low"], w_reach_ * reach_["abs_ci_high"]],
+            "detail": w,
+        }
+    gate["d7_decomposition"] = _decompose("retention_7")
+    gate["d1_decomposition"] = _decompose("retention_1")
+    w_reach = gate["d7_decomposition"]["share_reached_30"]
+
+    # Engagement guardrail where the gate can act: rounds among players with 30+ rounds. The all-player
+    # mean (above) carries the same imbalance as D7, so it is not a clean guardrail.
+    r30t, r30c = c.loc[ge30 & (c.version == G_T), "sum_gamerounds"], c.loc[ge30 & (c.version == G_C), "sum_gamerounds"]
+    b30 = S.bootstrap_mean_diff(r30t, r30c, C.N_BOOT_MEANS, C.SEED + 16)
+    gate["rounds_among_reachers"] = {
+        "n_t": int(len(r30t)), "n_c": int(len(r30c)),
+        "mean_t": float(r30t.mean()), "mean_c": float(r30c.mean()), "mean_diff": float(r30t.mean() - r30c.mean()),
+        "mean_diff_boot_ci": list(S.percentile_ci(b30)), "median_t": float(r30t.median()),
+        "median_c": float(r30c.median()), "mannwhitney_p": float(sps.mannwhitneyu(r30t, r30c).pvalue),
+        "share_past_40_rounds": S.two_prop_test(int((r30t >= 40).sum()), len(r30t), int((r30c >= 40).sum()),
+                                                len(r30c), alpha=C.ALPHA).to_dict(),
     }
-    gate["retest_sizing"] = {"target_effect_reachers": reach["abs_lift"], "baseline_d7_reachers": reach["rate_c"],
-                             "reachers_needed_total_5050": n_reach,
-                             "installs_needed_total_5050": int(np.ceil(n_reach / w_reach))}
-    # Worst case: if gate_40's extra players were all junk that never came back, how big is the D7 gap?
+
+    # Negative control once gate_40's net excess of < 15-round players is removed (assumed never to return:
+    # the reading most favourable to "the excess explains it").
+    nr_t, nr_c = c[lt30 & (c.version == G_T)], c[lt30 & (c.version == G_C)]
+    ex15 = gate["excess_players_with_lt_15_rounds"]
+    gate["negative_control"]["never_reached_30_excess_removed"] = {
+        "excess_removed": ex15,
+        "retention_7": S.two_prop_test(nr_t["retention_7"].sum(), len(nr_t) - ex15, nr_c["retention_7"].sum(),
+                                       len(nr_c), alpha=C.ALPHA).to_dict()}
+
+    # Re-test sizing at a change fixed in advance (config), never at the observed effect.
+    sesoi = C.GATE_SESOI_ABS
+    reach_d7 = gate["negative_control"]["reached_30"]["retention_7"]
+    n_install = S.required_total_n(gate["retention_7"]["rate_c"], -sesoi, 0.5, C.ALPHA, C.POWER)
+    n_reach = S.required_total_n(reach_d7["rate_c"], -sesoi / w_reach, 0.5, C.ALPHA, C.POWER)
+    gate["retest_sizing"] = {
+        "smallest_d7_change_per_install": sesoi, "baseline_d7_install": gate["retention_7"]["rate_c"],
+        "installs_needed_install_level_5050": n_install,
+        "share_reached_30": w_reach, "equivalent_change_among_reachers": sesoi / w_reach,
+        "baseline_d7_reachers": reach_d7["rate_c"], "reachers_needed_5050": n_reach,
+        "installs_needed_reacher_analysis_5050": int(np.ceil(n_reach / w_reach)),
+    }
+    # Best case for gate_40: if every one of its extra players was a junk install that never came back.
     excess = nt - nc
-    gate["worst_case_bound"] = {"excess_players_gate_40": int(excess),
-                                "d7_diff_if_excess_removed": float(v.loc[G_T, "r7"] / (nt - excess) - v.loc[G_C, "r7"] / nc)}
+    bc = S.two_prop_test(int(v.loc[G_T, "r7"]), nt - excess, int(v.loc[G_C, "r7"]), nc, alpha=C.ALPHA)
+    gate["best_case_for_gate_40"] = {"excess_players_gate_40": int(excess), "d7_diff_if_excess_removed": bc.abs_lift,
+                                     "ci": [bc.abs_ci_low, bc.abs_ci_high], "p_value": bc.p_value}
     # does the D7 gap sit with players who actually reached level 30? (descriptive)
     gate["d7_by_reached_30"] = (c.groupby(["reached_gate_30", "version"])["retention_7"].agg(["mean", "size"])
                                 .reset_index().assign(reached_gate_30=lambda d: d.reached_gate_30.astype(str))
                                 .to_dict(orient="records"))
+
+    # Early-churn segment (R6 target): players with < 15 rounds in 14 days, and the onboarding test size.
+    low = c[c["sum_gamerounds"] < 15]
+    share_low = len(low) / len(c)
+    d1y = by_d1.set_index("d1_status")["retention_7"]
+    n_r6 = S.required_total_n(float(low["retention_7"].mean()), C.ONBOARD_LIFT_ABS, 0.5, C.ALPHA, C.POWER)
+    early = {"players": int(len(low)), "share_of_installs": share_low,
+             "retention_1": float(low["retention_1"].mean()), "retention_7": float(low["retention_7"].mean()),
+             "d7_players": int(low["retention_7"].sum()),
+             "max_bucket_retention_7": float(by_rounds[by_rounds["rounds_bucket"].astype(str).isin(["0", "1-4", "5-14"])]
+                                             ["retention_7"].max()),
+             "d7_if_returned_day1": float(d1y["Returned Day 1"]), "d7_if_not_returned_day1": float(d1y["Did not return Day 1"]),
+             "onboarding_test_sizing": {"target_lift_abs": C.ONBOARD_LIFT_ABS, "players_needed_5050": n_r6,
+                                        "installs_needed_5050": int(np.ceil(n_r6 / share_low))}}
     out = {"overall": overall, "funnel": funnel.to_dict(orient="records"),
            "by_rounds_bucket": by_rounds.assign(rounds_bucket=lambda d: d.rounds_bucket.astype(str)).to_dict(orient="records"),
            "by_d1_status": by_d1.to_dict(orient="records"), "by_version": by_version.to_dict(orient="records"),
-           "gap_by_dimension": gaps.to_dict(orient="records"), "gate": gate}
+           "gap_by_dimension": gaps.to_dict(orient="records"), "early_churn_segment": early, "gate": gate}
     return out, boots
 
 
@@ -335,7 +424,8 @@ def build_all(verbose: bool = True) -> dict:
     results = {"config": {"seed": C.SEED, "alpha": C.ALPHA, "power": C.POWER, "n_bootstrap": C.N_BOOT,
                           "n_bootstrap_means": C.N_BOOT_MEANS, "intended_ad_share": C.INTENDED_AD_SHARE,
                           "value_per_conversion_usd": C.VALUE_PER_CONVERSION, "smallest_lift_of_interest_rel": C.SESOI_REL,
-                          "holdout_share": C.HOLDOUT_SHARE, "srm_fail_p": C.SRM_FAIL_P, "srm_warn_p": C.SRM_WARN_P}}
+                          "holdout_share": C.HOLDOUT_SHARE, "srm_fail_p": C.SRM_FAIL_P, "srm_warn_p": C.SRM_WARN_P,
+                          "gate_smallest_d7_change": C.GATE_SESOI_ABS, "onboarding_target_lift": C.ONBOARD_LIFT_ABS}}
     results["data_quality"] = data_quality(m_raw, m, c_raw, c, c_out)
     results["ad"], ad_extra = ad_experiment(m, cells)
     results["cookie"], cookie_boots = cookie_analysis(c, c_raw)

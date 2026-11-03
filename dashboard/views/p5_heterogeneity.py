@@ -2,8 +2,9 @@
 
 Two questions are kept apart:
   1. Does a segment's lift differ from the other segments'? The heterogeneity
-     question: one interaction likelihood-ratio test per dimension (results.json),
-     then segment-vs-rest contrasts (Agresti-Caffo variance). Primary view.
+     question: one interaction likelihood-ratio test per dimension (results.json,
+     odds scale), then segment-vs-rest contrasts (percentage-point scale: the raw
+     difference Lift - Lift, rest, with an Agresti-Caffo CI and p). Primary view.
   2. Is there a lift inside a segment? Mostly a question of sample size, because
      the overall lift is real. Secondary view.
 The correction and alpha controls recompute the contrasts live with
@@ -78,11 +79,12 @@ def p_eq(p: float) -> str:
 
 
 def seg_name(dim: str, seg) -> str:
+    """Segment name for prose (en dash in ranges: '36–50 ads', 'Night (0–5)')."""
     if dim == "most_ads_hour":
         return f"hour {seg}"
     if dim == "exposure_bucket":
-        return f"{seg} ads"
-    return str(seg)
+        return f"{str(seg).replace('-', '–')} ads"
+    return str(seg).replace("-", "–")
 
 
 def strength(p: float) -> str:
@@ -100,21 +102,65 @@ def verb(n: int, singular: str, plural: str) -> str:
     return singular if n == 1 else plural
 
 
+def sgn(x: float, nd: int = 2) -> str:
+    """Signed number with a true minus sign for prose: +0.95 / −0.74."""
+    return f"{x:+.{nd}f}".replace("-", "−")
+
+
+def hour_ranges(hours) -> str:
+    """[0, 1, 2, 4, 5, 6] -> '0–2 and 4–6'."""
+    hours = sorted(int(h) for h in hours)
+    runs, start = [], None
+    for i, h in enumerate(hours):
+        start = h if start is None else start
+        if i == len(hours) - 1 or hours[i + 1] != h + 1:
+            runs.append(f"{start}–{h}" if h != start else f"{h}")
+            start = None
+    return runs[0] if len(runs) == 1 else ", ".join(runs[:-1]) + " and " + runs[-1]
+
+
 def kpi(col, label: str, value: str, note: str | None = None, help: str | None = None) -> None:
     col.metric(label, value, delta=note, delta_color="off", delta_arrow="off", help=help)
 
 
+def hover_p_2sig(fig):
+    """Hover p-values with two significant digits. The forest builder formats them with .4f, which shows a tiny
+    adjusted p (Tuesday's lift, the exposure contrasts) as 0.0000; a no-op once the builder uses .2g."""
+    for tr in fig.data:
+        if tr.hovertemplate:
+            tr.hovertemplate = (tr.hovertemplate.replace("%{customdata[4]:.4f}", "%{customdata[4]:.2g}")
+                                .replace("%{customdata[6]:.4f}", "%{customdata[6]:.2g}"))
+    return fig
+
+
 # ------------------------------------------------------------------ what the interaction tests say
 day_holm = segment_table("most_ads_day", DEFAULT_CORRECTION, ALPHA0).set_index("most_ads_day")
+hour_holm = segment_table("most_ads_hour", DEFAULT_CORRECTION, ALPHA0)
 hd, hh, hp, he = (HET[d] for d in DIMS)
 night = hp["night_counts"]["psa"]
-day_parts = [f"{s}-peak users {abs(x) * 100:.2f} pp {'above' if x > 0 else 'below'}"
-             for s, x in ((s, day_holm.loc[s, "diff_vs_rest"]) for s in hd["segments_differing_holm"])]
+day_parts = [f"{s}-peak users {abs(r['diff_vs_rest']) * 100:.2f} pp {'above' if r['diff_vs_rest'] > 0 else 'below'} "
+             f"(95% CI {sgn(r['diff_vs_rest_ci_low'] * 100)} to {sgn(r['diff_vs_rest_ci_high'] * 100)})"
+             for s, r in ((s, day_holm.loc[s]) for s in hd["segments_differing_holm"])]
+# hours whose PSA arm has no conversion at all (0-2 and 4-6: mostly night, but hour 6 is Morning)
+zero_hours = hour_holm.loc[hour_holm["conv_c"] == 0, "most_ads_hour"].astype(int).tolist()
+ZERO_HOURS = (f"{len(zero_hours)} {verb(len(zero_hours), 'hour', 'hours')} ({hour_ranges(zero_hours)}"
+              + (", mostly night)" if sum(h < 6 for h in zero_hours) > len(zero_hours) / 2 else ")")
+              if zero_hours else "no hour")
+# the day with the largest lift has one of the week's lowest PSA rates: part of its lift is a low control rate
+top_day = hd["max_lift_segment"]
+top_c = day_holm.loc[top_day]
+TOP_DAY_LOW_CONTROL = int((day_holm["rate_c"] < top_c["rate_c"]).sum()) <= 1
+TOP_DAY_NOTE = (f"{top_day}'s PSA arm has {int(top_c['n_c']):,} users and {int(top_c['conv_c'])} conversions "
+                f"({top_c['rate_c']:.2%}, one of the lowest control rates of the week), so part of {top_day}'s lift "
+                "is a low control rate" if TOP_DAY_LOW_CONTROL else "")
+TOP_DAY_LOW = f"part of {top_day}'s lift is a low PSA rate ({top_c['rate_c']:.2%})" if TOP_DAY_LOW_CONTROL else ""
 # dimension-specific caveats, used in the Step 1 table and in the live takeaways
 NIGHT_NOTE = (f"driven entirely by Night (0–5), where PSA has {night['conversions']} conversion among "
               f"{night['users']:,} users; excluding Night, {p_eq(hp['lrt_excluding_night']['p_value'])}")
 EXPOSURE_NOTE = ("exposure is recorded after assignment and tracks how active a user is: heavy users respond "
                  "differently, which does not show that more ads cause more lift")
+R3_TEST = ("pre-register a test that randomizes the delivery schedule (weekday and time slot, e.g. Tuesday vs. "
+           "Thursday delivery)")
 
 
 def reading_cell(key: str) -> str:
@@ -127,12 +173,13 @@ def reading_cell(key: str) -> str:
         if not day_parts:
             return f"{head}. No day differs from the others after Holm."
         survive = {1: "survives Holm", 2: "both survive Holm"}.get(len(day_parts), "all survive Holm")
-        return (f"{head}. Lift vs the other days: {', '.join(day_parts)} ({survive}). 'Peak day' describes the "
-                "user's habits, not a day we can buy.")
+        low = (f" {top_day}'s PSA rate is low ({top_c['rate_c']:.2%})." if TOP_DAY_LOW_CONTROL else "")
+        return (f"{head}. Lift vs the other days: {', '.join(day_parts)}; {survive}.{low} 'Peak day' describes "
+                "the user's habits, not a day we can buy.")
     if key == "most_ads_hour":
-        return (f"{head}. No hour differs from the others after correction; "
-                f"{h['segments_with_zero_control_conversions']} night hours have zero PSA conversions. Excluding "
-                f"night hours (0–5): {p_eq(h['lrt_excluding_night']['p_value'])}.")
+        return (f"{head}. No hour differs from the others after correction; {ZERO_HOURS} "
+                f"{verb(len(zero_hours), 'has', 'have')} zero PSA conversions. Excluding the Night daypart "
+                f"(hours 0–5): {p_eq(h['lrt_excluding_night']['p_value'])}.")
     if key == "daypart":
         lead = f"Looks like {s}, but it is" if p < 0.05 else f"{head};"
         return f"{lead} {NIGHT_NOTE}: no reliable time-of-day pattern."
@@ -158,7 +205,7 @@ def adjusted_for_dims(dim: str) -> str:
         return "regroups hour"
     h = HET[dim]
     p = h.get("lrt_p_bonferroni_3_dims", min(1.0, h["lrt"]["p_value"] * N_DIMS))
-    return f"{p:.2f}" if 0.01 <= p < 0.995 else p_text(p)
+    return p_text(p)
 
 
 # ------------------------------------------------------------------ page
@@ -197,10 +244,12 @@ for key, cfg in DIMS.items():
                 f"| {adjusted_for_dims(key)} | {reading_cell(key)} |")
 st.markdown(f"| Dimension | Segments | Interaction p | χ² (df) | Allowing for {N_DIMS} dimensions | Reading |\n"
             "|---|---:|---:|---:|---:|---|\n" + "\n".join(rows))
-st.caption("Likelihood-ratio test of ad × segment in a binomial model; ▸ marks the dimension selected above. "
+st.caption("Likelihood-ratio test of ad × segment in a binomial (logit) model, so it asks whether the lift differs "
+           "on the odds scale; the segment-vs-rest contrasts in Step 2 are on the percentage-point scale, so the two "
+           "need not agree exactly. ▸ marks the dimension selected above. "
            f"'Allowing for {N_DIMS} dimensions' multiplies p by the {N_DIMS} dimensions explored (Bonferroni).")
 takeaway(f"Only peak day shows a signal that holds up ({p_eq(hd['lrt']['p_value'])}; "
-         f"{hd['lrt_p_bonferroni_3_dims']:.2f} allowing for the {N_DIMS} dimensions explored). Hour shows none "
+         f"{p_text(hd['lrt_p_bonferroni_3_dims'])} allowing for the {N_DIMS} dimensions explored). Hour shows none "
          f"({p_eq(hh['lrt']['p_value'])}); the daypart signal comes from one sparse cell "
          f"({p_eq(hp['lrt_excluding_night']['p_value'])} without Night); exposure differs strongly, but it is "
          "recorded after assignment and tracks how active a user is.")
@@ -246,7 +295,7 @@ else:
     title = f"Ad lift by {d['title']} (pp, {conf(alpha)} CI; filled = lift ≠ 0, {CORR_SHORT[method]})"
     fig = F.fig_lift_forest(tab, dim, title, overall_lift=T["abs_lift"], seg_title=d["axis"],
                             sig_col="significant_adj", **labels)
-show(fig, key="p5_forest")
+show(hover_p_2sig(fig), key="p5_forest")
 
 reading = live_reading(dim, alpha)
 if question == "differs" and is_default:
@@ -259,7 +308,7 @@ elif question == "differs":
         head = (f"{len(diff)} of {n_seg} {d['prose']} {verb(len(diff), 'differs', 'differ')} from the others "
                 f"{corr_phrase} at α = {alpha:.2f}")
         if len(diff) <= 3:
-            head += ": " + ", ".join(f"{seg_name(dim, s)} ({x * 100:+.2f} pp vs the rest)"
+            head += ": " + ", ".join(f"{seg_name(dim, s)} ({sgn(x * 100)} pp vs the rest)"
                                      for s, x in zip(diff[dim], diff["diff_vs_rest"]))
     takeaway(f"{head}. With no correction about {expected_fp:.2g} of {n_seg} contrasts would be flagged by chance if "
              f"none truly differed. Interaction test {p_eq(lrt['p_value'])}: {reading}.")
@@ -277,11 +326,14 @@ note_small = ""
 if len(small):
     seg_list = ", ".join(seg_name(dim, s) for s in small[dim])
     note_small = (f" {len(small)} of {n_seg} {d['prose']} ({seg_list}) have fewer than {SMALL_CONTROL} PSA users or no "
-                  "PSA conversions at all, so their intervals are very wide; the contrasts use Agresti–Caffo "
-                  "adjusted rates so an empty cell cannot create a false difference.")
+                  "PSA conversions at all, so their intervals are very wide. The contrasts' intervals and p-values use "
+                  "Agresti–Caffo adjusted rates (+1 conversion and +1 non-conversion per group), so an empty cell "
+                  "cannot create a false difference; their point estimate is the raw difference, so in these cells "
+                  "the interval is not centred on it.")
+day_note = f" {TOP_DAY_NOTE}." if dim == "most_ads_day" and TOP_DAY_NOTE else ""
 caveat(f"<b>Exploratory, not a randomized comparison.</b> {d['label']} is recorded after assignment and its mix "
        f"differs slightly between arms ({v_note}). It describes how users behaved, not a slot we bought, so a "
-       f"pattern here is a hypothesis for a pre-registered test, not a reason to move budget.{note_small}")
+       f"pattern here is a hypothesis for a pre-registered test, not a reason to move budget.{day_note}{note_small}")
 
 with st.expander(f"Segment table: all {n_seg} {d['prose']} ({CORR_SHORT[method]}, α = {alpha:.2f})"):
     show_tab = pd.DataFrame({
@@ -304,10 +356,13 @@ with st.expander(f"Segment table: all {n_seg} {d['prose']} ({CORR_SHORT[method]}
                                 "PSA users": st.column_config.NumberColumn(format="localized"),
                                 "Lift": signed, "Lift, rest": signed, "Diff. vs rest": signed,
                                 "CI low": signed, "CI high": signed, "Adj. p": pcol, "Adj. p, lift ≠ 0": pcol})
-    st.caption(f"Lift, Lift, rest and Diff. vs rest in pp. Diff. vs rest = this {d['noun']}'s lift minus the "
-               f"lift in all other {d['prose']}, with its {conf(alpha)} interval (Agresti–Caffo); 'Adj. p' and "
-               "'Differs' answer the heterogeneity question, the last two columns the lift ≠ 0 question. Adjusted "
-               f"p-values use the selected correction across the {n_seg} {d['prose']}.")
+    st.caption(f"Lift, Lift, rest and Diff. vs rest in pp. Diff. vs rest is the raw difference, Lift − Lift, rest: "
+               f"this {d['noun']}'s lift minus the lift in all other {d['prose']}. Its {conf(alpha)} interval and "
+               "'Adj. p' use Agresti–Caffo adjusted rates (+1 conversion and +1 non-conversion per group), so in "
+               "sparse cells the interval is not centred on the point. These contrasts are on the percentage-point "
+               "scale; the Step 1 interaction test is on the odds scale. 'Adj. p' and 'Differs' answer the "
+               "heterogeneity question, the last two columns the lift ≠ 0 question. Adjusted p-values use the "
+               f"selected correction across the {n_seg} {d['prose']}.")
 
 # ---------------------------------------------------------------- sensitivity: standardized lift
 st.subheader("Sensitivity check: is the headline an artifact of the segment mix?")
@@ -328,17 +383,27 @@ takeaway(f"Re-weighting the lift within segments (Mantel–Haenszel) gives {min(
 # ---------------------------------------------------------------- exposure
 st.subheader("Exposure: where the lift lives")
 con = he["concentration"]
+le20, b2135 = con["le_20_ads_pooled"], con["bucket_21_35"]
+by_bucket = con["incremental_conversions_by_bucket"]
+negative = [b.replace("-", "–") for b, x in by_bucket.items() if x < 0]
 expo = segment_table("exposure_bucket", DEFAULT_CORRECTION, ALPHA0)
 e1, e2, e3, e4 = st.columns(4)
-kpi(e1, "Users with ≤ 20 ads", f"{con['share_users_le_20_ads']:.0%}", "no detectable lift",
-    help="Share of all users who saw 20 ads or fewer; the lift in each of those buckets is indistinguishable from 0.")
-kpi(e2, "Lift share, 36–200 ads", f"{con['share_incremental_conversions_36_200']:.0%}",
+kpi(e1, "Users with ≤ 20 ads", f"{con['share_users_le_20_ads']:.0%}",
+    f"lift {sgn(le20['abs_lift'] * 100)} pp: none measurable",
+    help=f"Share of all users who saw 20 ads or fewer. Pooled, their lift is {sgn(le20['abs_lift'] * 100)} pp "
+         f"(95% CI {sgn(le20['abs_ci_low'] * 100)} to {sgn(le20['abs_ci_high'] * 100)}); a lift above "
+         f"{le20['mde_abs'] * 100:.2f} pp ({le20['mde_rel']:+.0%} on their {le20['rate_c']:.2%} PSA base) would have "
+         "shown with 80% power.")
+kpi(e2, "21–35 ads: inconclusive", f"{sgn(b2135['abs_lift'] * 100)} pp",
+    f"95% CI {sgn(b2135['abs_ci_low'] * 100)} to {sgn(b2135['abs_ci_high'] * 100)}",
+    help=f"The next {b2135['share_ad_users']:.0%} of ad users. The interval is too wide to say whether they respond.")
+kpi(e3, "Lift share, 36–200 ads", f"{con['share_incremental_conversions_36_200']:.0%}",
     f"from {con['share_ad_users_36_200']:.0%} of ad users",
-    help="Share of incremental conversions (lift × ad users in each bucket) that come from the 36–50, 51–100 and "
-         "101–200 buckets.")
-kpi(e3, "PSA users at 200+ ads", f"{con['top_bucket_control_users']:,}",
-    f"lift CI {con['top_bucket_ci_pp'][0]:+.1f} to {con['top_bucket_ci_pp'][1]:+.1f} pp",
-    help="Too few PSA users to say anything about the lift past 200 ads.")
+    help=f"Bucket-by-bucket incremental conversions (each bucket's lift × its ad users, against its own PSA rate): "
+         f"{con['incremental_conversions_36_200']:,.0f} of {con['incremental_conversions_bucketwise_total']:,.0f} come "
+         "from the 36–50, 51–100 and 101–200 buckets. This bucket total differs from the headline "
+         f"{AD['business']['incremental_conversions']['point']:,.0f}"
+         + (f", and buckets {' and '.join(negative)} are slightly negative." if negative else "."))
 kpi(e4, "PSA rate, 200+ vs 1–5",
     f"{con['control_rate_highest_bucket'] / con['control_rate_lowest_bucket']:.0f}×",
     f"{con['control_rate_lowest_bucket']:.1%} → {con['control_rate_highest_bucket']:.1%}",
@@ -349,23 +414,27 @@ takeaway(CAT["het_exposure"])
 caveat("<b>The lift lives in heavy users; this is not a frequency curve.</b> Total ads seen is recorded after "
        "assignment and tracks how active a user is, so the chart mixes who the user is with what the ads did. It "
        "cannot say what more impressions or a bigger budget would buy, and it cannot show where extra exposure stops "
-       "paying: the 200+ bucket is too small to read. It is the hypothesis for R2's randomized frequency-cap / "
-       "2× budget test.")
+       f"paying: the 200+ bucket is too small to read ({con['top_bucket_control_users']:,} PSA users, lift CI "
+       f"{sgn(con['top_bucket_ci_pp'][0], 1)} to {sgn(con['top_bucket_ci_pp'][1], 1)} pp). It is the hypothesis for "
+       "R2's user-level test (up to 2× today's impressions per user, or a frequency cap).")
 
 with st.container(border=True):
     st.markdown(
         "**What this means for the plan**\n\n"
-        f"- **R3 · Media buyer:** do not re-plan spend by day or hour. The day signal is modest "
-        f"({p_eq(hd['lrt']['p_value'])}; {hd['lrt_p_bonferroni_3_dims']:.2f} allowing for {N_DIMS} dimensions) and "
-        "describes users' habits, not a slot we can buy; hour shows no evidence "
-        f"({p_eq(hh['lrt']['p_value'])}) and dayparts no reliable pattern "
-        f"({p_eq(hp['lrt_excluding_night']['p_value'])} without the sparse Night cell). If daypart matters to the "
-        "team, run a pre-registered daypart test with the daypart as the randomized factor.\n"
-        "- **R2 · Growth PM + media buyer:** do not double the budget blindly. This experiment did not vary spend, "
-        "so it cannot say what extra budget buys, and the lift lives in heavy users "
-        f"({con['share_incremental_conversions_36_200']:.0%} of incremental conversions come from users who saw "
-        "36–200 ads). Test it: randomized 2× budget or frequency-cap arms, reading out marginal incremental "
-        "conversions per extra USD 1,000.")
+        f"- **R3 · Media buyer:** don't re-plan spend by day or hour. The day signal is modest "
+        f"({p_eq(hd['lrt']['p_value'])}; {p_text(hd['lrt_p_bonferroni_3_dims'])} allowing for {N_DIMS} dimensions) and "
+        "describes users' habits, not a slot we can buy"
+        + (f"; {TOP_DAY_LOW}" if TOP_DAY_LOW else "")
+        + f". Hour shows no evidence ({p_eq(hh['lrt']['p_value'])}) and dayparts no reliable pattern "
+        f"({p_eq(hp['lrt_excluding_night']['p_value'])} without the sparse Night cell). If timing matters, "
+        f"{R3_TEST}.\n"
+        "- **R2 · Growth PM + media buyer:** don't double the budget blindly; test it. This experiment did not vary "
+        "spend, so it cannot say what extra budget buys, and the lift lives in heavy users "
+        f"({con['share_incremental_conversions_36_200']:.0%} of the bucket-by-bucket incremental conversions come from "
+        f"the {con['share_ad_users_36_200']:.0%} of ad users who saw 36–200 ads). Run a user-level test where "
+        "one arm gets up to 2× today's impressions per user (the closest stand-in for 2× budget) or a frequency cap, "
+        "with users tiered by activity measured *before* the test (a true budget test needs a geo split), and read "
+        "out incremental conversions per extra USD 1K spent.")
 
 day_counts, hour_counts = set(hd["differs_from_rest"].values()), set(hh["differs_from_rest"].values())
 try_day = (f"on **Peak ad day**, {' and '.join(hd['segments_differing_holm'])} differ from the other days under every "
@@ -383,7 +452,9 @@ segments don't: counting "significant" segments measures sample size, not hetero
 **Step 1, the interaction test.** One likelihood-ratio test per dimension asks whether the lift differs across its
 segments *at all*. Quote it before any single segment. We explored {N_DIMS} dimensions (day, hour, exposure; daypart
 only regroups hour), so a p-value near 0.05 should be read against a stricter bar: day's
-{p_text(hd['lrt']['p_value'])} becomes {hd['lrt_p_bonferroni_3_dims']:.2f} after allowing for that.
+{p_text(hd['lrt']['p_value'])} becomes {p_text(hd['lrt_p_bonferroni_3_dims'])} after allowing for that. The test
+works on the odds scale (a logistic model), while the segment-vs-rest contrasts work in percentage points, so the
+two can disagree a little at the margin.
 
 **Step 2, the forest plot.** One row per segment. The dot is the lift in that segment, the horizontal line its
 confidence interval, the solid vertical line "no effect" and the dotted blue line the overall lift. In the main view a
@@ -402,7 +473,10 @@ Try it: {try_day}; {try_hour}; on **Total ads seen**, {he['differs_from_rest']['
 correction and {he['differs_from_rest']['bonferroni']} after Bonferroni.
 
 **Whiskers versus fill.** The whiskers are the ordinary interval for the segment's own lift; the correction only
-changes the fill. The difference from the other segments, with its own interval, is in the segment table.
+changes the fill. The difference from the other segments, with its own interval, is in the segment table: the point
+is the raw difference (Lift − Lift, rest), while its interval and p-value add one conversion and one non-conversion to
+each group (Agresti–Caffo), so a segment with no PSA conversions cannot look infinitely precise. In such sparse
+segments the interval is therefore not centred on the point.
 
 **Sensitivity check.** The Mantel–Haenszel lift re-weights the lift within segments. If it were far from the crude
 lift (or flipped sign, Simpson's paradox), the uneven segment mix would matter. It doesn't. The segments are
@@ -416,12 +490,24 @@ segments built from them are not randomized comparisons: treat any pattern as a 
 PSA users convert more when they see more PSAs, so exposure mostly sorts users by how active they are.
 
 **Common misreadings.**
-- "{hd['max_lift_segment']} has the biggest lift, so move budget there." The peak ad day is a user habit, not a slot
-  we bought; only a randomized daypart test can say whether buying {hd['max_lift_segment']} works better.
+- "{top_day} has the biggest lift, so move budget there." The peak ad day is a user habit recorded after
+  assignment, not a slot we bought{', and ' + TOP_DAY_LOW if TOP_DAY_LOW else ''}.
+  If timing matters, {R3_TEST}.
 - "Hour X has a significant lift and hour Y doesn't, so hours differ." Both statements are about sample size; the
   contrasts (and the interaction test) say hours do not differ.
 - "Night is where the ad works best." The Night estimate rests on {night['conversions']} PSA conversion among
   {night['users']:,} users.
-- "Users with {he['max_lift_segment']} ads have a {he['max_lift_pp']:.0f} pp lift, so show everyone more ads."
+- "Users with {he['max_lift_segment'].replace('-', '–')} ads have a {he['max_lift_pp']:.0f} pp lift, so show everyone
+  more ads."
   Those users are different people (far more active), not the same people with more ads.
 """)
+
+# ---------------------------------------------------------------- phones
+# A wide markdown table scrolls inside itself instead of pushing the whole page sideways; the Step 1
+# table's reading column is prose, so it keeps a readable width.
+st.markdown("<style>@media (max-width: 640px) {"
+            "[data-testid='stMarkdownContainer'] table {display: block; overflow-x: auto; max-width: 100%;}"
+            "[data-testid='stMarkdownContainer'] th, [data-testid='stMarkdownContainer'] td {min-width: 4.5rem;}"
+            "[data-testid='stMarkdownContainer'] td:first-child {min-width: 8rem;}"
+            "[data-testid='stMarkdownContainer'] td:last-child {min-width: 16rem;}"
+            "}</style>", unsafe_allow_html=True)

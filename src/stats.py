@@ -177,7 +177,9 @@ def mde(p_c: float, n_t: int, n_c: int, alpha: float = 0.05, power: float = 0.8)
             "cohens_h": float(h), "mde_abs": p_t - p_c, "mde_rel": p_t / p_c - 1}
 
 
-def achieved_power(p_c: float, p_t: float, n_t: int, n_c: int, alpha: float = 0.05) -> float:
+def power_at_lift(p_c: float, p_t: float, n_t: int, n_c: int, alpha: float = 0.05) -> float:
+    """Power to detect a true change from p_c to p_t with this design (two-sided, Cohen's h).
+    A design property: evaluate it at a lift chosen in advance, never at the observed effect."""
     h = proportion_effectsize(p_t, p_c)
     return float(NormalIndPower().power(effect_size=abs(h), nobs1=n_t, ratio=n_c / n_t, alpha=alpha))
 
@@ -210,9 +212,11 @@ def segment_lifts(cells: pd.DataFrame, by: str, t_label: str, c_label: str,
        (two-proportion test of treatment vs control inside the segment).
     2. "Is this segment's lift different from the other segments'?"  -> diff_vs_rest,
        p_vs_rest / p_vs_rest_adj / differs_adj. This is the heterogeneity question.
-       Difference-in-differences (segment lift minus lift in all other segments)
-       with Agresti-Caffo adjusted proportions (+1 success, +1 failure per group),
-       so cells with 0 control conversions don't produce a zero variance.
+       Difference-in-differences: segment lift minus the lift in all other segments.
+       The point estimate is the raw difference (so diff_vs_rest == abs_lift - lift_rest);
+       the CI and p-value use Agresti-Caffo adjusted proportions (+1 success, +1 failure
+       per group), so cells with 0 control conversions don't produce a zero variance.
+       In sparse cells the CI is therefore not centred on the raw difference.
     """
     piv = cells.groupby([by, group_col], observed=True)[[users_col, conv_col]].sum().unstack(group_col)
     tot = piv.sum()
@@ -227,14 +231,14 @@ def segment_lifts(cells: pd.DataFrame, by: str, t_label: str, c_label: str,
         groups = [(kt, nt), (kc, nc), (tot[(conv_col, t_label)] - kt, tot[(users_col, t_label)] - nt),
                   (tot[(conv_col, c_label)] - kc, tot[(users_col, c_label)] - nc)]
         ac = [((k + 1) / (n + 2), n + 2) for k, n in groups]
-        diff = (ac[0][0] - ac[1][0]) - (ac[2][0] - ac[3][0])
+        diff_ac = (ac[0][0] - ac[1][0]) - (ac[2][0] - ac[3][0])     # Agresti-Caffo centre (CI and test only)
         se = float(np.sqrt(sum(p_ * (1 - p_) / n_ for p_, n_ in ac)))
         rest_t, rest_c = groups[2][0] / groups[2][1], groups[3][0] / groups[3][1]
         d["lift_rest"] = rest_t - rest_c
-        d["diff_vs_rest"] = float(diff)
-        d["diff_vs_rest_ci_low"] = float(diff - zc * se)
-        d["diff_vs_rest_ci_high"] = float(diff + zc * se)
-        d["p_vs_rest"] = float(2 * stats.norm.sf(abs(diff / se)))
+        d["diff_vs_rest"] = float(res.abs_lift - (rest_t - rest_c))  # raw point estimate
+        d["diff_vs_rest_ci_low"] = float(diff_ac - zc * se)
+        d["diff_vs_rest_ci_high"] = float(diff_ac + zc * se)
+        d["p_vs_rest"] = float(2 * stats.norm.sf(abs(diff_ac / se)))
         rows.append(d)
     out = pd.DataFrame(rows)
     out["p_adj"] = adjust_pvalues(out["p_value"], method)

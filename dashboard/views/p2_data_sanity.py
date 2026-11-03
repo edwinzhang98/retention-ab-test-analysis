@@ -2,8 +2,10 @@
 gate experiment's imbalance sits, and exposure parity in the ad experiment.
 
 The SRM panels are recomputed live (src.stats.srm_check, src.stats.quota_exactness)
-for the intended split and alarm threshold the viewer picks; the gate strata reuse
-the same rule. Everything else is read from results.json or the cached tables.
+for the intended split and alarm threshold the viewer picks. The rounds-band table
+under them is descriptive: those subsets were chosen after seeing the gate warning, so
+they get counts, net excess and p-values but no PASS / WARNING / FAIL status.
+Everything else is read from results.json or the cached tables.
 """
 from __future__ import annotations
 
@@ -11,8 +13,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitPageNotFoundError
 
-from common import (C, F, S, caveat, how_to_read, load_cache, load_catalog_takeaways, load_results, page_header, show,
-                    takeaway)
+from common import (C, F, S, caveat, ci_text, how_to_read, load_cache, load_catalog_takeaways, load_results, p_text,
+                    page_header, sgn, sgn_pp, show, takeaway)
 
 res = load_results()
 dq_m, dq_c = res["data_quality"]["marketing"], res["data_quality"]["cookie"]
@@ -24,6 +26,7 @@ FAIL_DEFAULT = float(srm_gate["threshold"])
 WARN_LINE = float(srm_gate["warn_threshold"])
 THRESHOLDS = sorted({0.0001, FAIL_DEFAULT, WARN_LINE, 0.05})
 ROUND_WINDOW_DAYS = 14  # sum_gamerounds counts rounds in each player's first 14 days
+POST_HOC = "Descriptive: subset chosen after seeing the warning"
 
 plan_ad, plan_gate = srm_ad["intended_share_t"], srm_gate["intended_share_t"]
 split_ad = f"{plan_ad * 100:.0f}/{(1 - plan_ad) * 100:.0f}"
@@ -37,13 +40,9 @@ def fmt_p(p: float) -> str:
     return "< 0.0001" if p < 1e-4 else f"{p:.4f}"
 
 
-def p_txt(p: float) -> str:
-    """p-value for sentences: never 0, two significant digits ('p = 0.0086', 'p = 0.81')."""
-    if p < 1e-4:
-        return "p < 0.0001"
-    if p < 1e-3 or p >= 0.995:
-        return f"p = {p:.4f}"
-    return f"p = {p:.2g}"
+def signed_count(x: float, nd: int = 0) -> str:
+    """+394.5 / −0.04 with thousands separators and a true minus."""
+    return f"{x:+,.{nd}f}".replace("-", "−")
 
 
 def table_height(n_rows: int) -> int:
@@ -52,11 +51,8 @@ def table_height(n_rows: int) -> int:
 
 
 def dq_table(rows: list[tuple[str, str, str]]) -> None:
-    df = pd.DataFrame(rows, columns=["Check", "Result", "Status"])
-    st.dataframe(df, hide_index=True, width="stretch", height=table_height(len(df)),
-                 column_config={"Check": st.column_config.TextColumn(width=210),
-                                "Result": st.column_config.TextColumn(width=640),
-                                "Status": st.column_config.TextColumn(width=100)})
+    """Static table: long results wrap instead of being cut off (st.dataframe truncates long cells)."""
+    st.table(pd.DataFrame(rows, columns=["Check", "Result", "Status"]).set_index("Check"))
 
 
 def page_link(page: str, label: str) -> None:
@@ -85,7 +81,7 @@ st.caption("Checks run on the raw files before any analysis. Status: Pass = as e
 
 nulls_m, nulls_c = sum(dq_m["nulls"].values()), sum(dq_c["nulls"].values())
 zf = zero_round_flags()
-tab_m, tab_c = st.tabs(["Marketing A/B (ad experiment)", "Cookie Cats (retention and gate experiment)"])
+tab_m, tab_c = st.tabs(["Marketing A/B (ads)", "Cookie Cats (game)"])  # short enough for a phone
 with tab_m:
     dq_table([
         ("Row count", f"{dq_m['rows_raw']:,} raw rows, {dq_m['rows_clean']:,} analysed",
@@ -95,7 +91,8 @@ with tab_m:
         ("Nulls", f"{nulls_m} missing values across {len(dq_m['nulls'])} columns", "Pass" if nulls_m == 0 else "Note"),
         ("Arms (test group)", ", ".join(dq_m["test_group_values"]), "Pass"),
         ("Arm sizes", f"{srm_ad['n_t']:,} ad / {srm_ad['n_c']:,} PSA = {srm_ad['observed_share_t'] * 100:.3f}% / "
-         f"{(1 - srm_ad['observed_share_t']) * 100:.3f}%: exactly on a {split_ad} target (section 2)", "Note"),
+         f"{(1 - srm_ad['observed_share_t']) * 100:.3f}%: exactly on a {split_ad} target, most likely a fixed quota "
+         "(section 2)", "Note"),
         ("Converted", ", ".join(dq_m["converted_values"]), "Pass"),
         ("Total ads per user", f"{dq_m['total_ads_min']} to {dq_m['total_ads_max']:,} (median "
          f"{dq_m['total_ads_p50']:.0f}, p99 {dq_m['total_ads_p99']:.0f}, p99.9 {dq_m['total_ads_p999']:,.1f}); "
@@ -120,6 +117,8 @@ with tab_c:
         ("Rounds in first 14 days", f"{dq_c['rounds_min']} to {dq_c['rounds_max_raw']:,} raw (median "
          f"{dq_c['rounds_p50']:.0f}, p99 {dq_c['rounds_p99']:.0f}, p99.9 {dq_c['rounds_p999']:,.0f}); "
          f"max {dq_c['rounds_max_clean']:,} after cleaning. The 14-day window overlaps the Day-7 flag", "Fixed"),
+        ("Level reached", "Not in the data: rounds ≥ levels, so '30+ rounds' means 'could have reached level 30'",
+         "Limitation"),
         ("Players with 0 rounds", f"{dq_c['zero_round_players']:,} installed but never played; kept, they count "
          "as installs in every rate", "Note"),
         ("0-round players flagged as back", f"{zf['d1']} players with 0 rounds are flagged as back on Day 1 "
@@ -145,15 +144,14 @@ st.markdown(
 r_raw, r_clean = dq_c["retention_raw"], dq_c["retention_clean"]
 sens = pd.DataFrame([
     ("D1 retention", f"{r_raw['d1'] * 100:.3f}%", f"{r_clean['d1'] * 100:.3f}%",
-     f"{(r_clean['d1'] - r_raw['d1']) * 100:+.3f} pp"),
+     f"{sgn((r_clean['d1'] - r_raw['d1']) * 100, 3)} pp"),
     ("D7 retention", f"{r_raw['d7'] * 100:.3f}%", f"{r_clean['d7'] * 100:.3f}%",
-     f"{(r_clean['d7'] - r_raw['d7']) * 100:+.3f} pp"),
+     f"{sgn((r_clean['d7'] - r_raw['d7']) * 100, 3)} pp"),
     ("Mean rounds per player", f"{dq_c['mean_rounds_raw']:.2f}", f"{dq_c['mean_rounds_clean']:.2f}",
-     f"{dq_c['mean_rounds_clean'] - dq_c['mean_rounds_raw']:+.2f}"),
+     sgn(dq_c["mean_rounds_clean"] - dq_c["mean_rounds_raw"])),
 ], columns=["Metric", f"With the player ({dq_c['rows_raw']:,})", f"Without it ({dq_c['rows_clean']:,}, used)",
             "Change"])
-st.dataframe(sens, hide_index=True, width="stretch", height=table_height(len(sens)),
-             column_config={"Metric": st.column_config.TextColumn(width=300)})
+st.table(sens.set_index("Metric"))
 max_shift = max(abs(r_clean["d1"] - r_raw["d1"]), abs(r_clean["d7"] - r_raw["d7"])) * 100
 shift_txt = "less than 0.01 pp" if max_shift < 0.01 else f"{max_shift:.2f} pp"
 takeaway(f"Dropping the player moves D1 and D7 retention by {shift_txt}; only the mean number of rounds changes "
@@ -161,7 +159,7 @@ takeaway(f"Dropping the player moves D1 and D7 retention by {shift_txt}; only th
 cleaned = S.srm_check(gate["players"]["gate_40"], gate["players"]["gate_30"], plan_gate, FAIL_DEFAULT, WARN_LINE)
 st.caption(f"The gate experiment's sample-ratio check (section 2) uses the raw assignment counts, this player "
            f"included ({srm_gate['n_c']:,} gate_30 players), because assignment happens before any cleaning. "
-           f"Without the player it would be {p_txt(cleaned['p_value'])}: the same verdict.")
+           f"Footnote, cleaned counts: without the player it would be {p_text(cleaned['p_value'])}, the same verdict.")
 
 # ------------------------------------------------------------------ 2 · SRM
 st.subheader("2 · Sample ratio mismatch (SRM)")
@@ -170,8 +168,8 @@ st.markdown(
     "chi-square test compares the observed arm sizes with the planned ones. A very small p-value means the split "
     "is off by more than chance, which usually points to a bug in assignment or logging (users lost, duplicated or "
     "moved between arms). The arms may then no longer be comparable, so the result cannot be trusted as is. The "
-    "opposite can also happen: a split that lands *exactly* on target is what a quota looks like, and then the "
-    "test has nothing to detect.")
+    "opposite can also happen: a split that lands *exactly* on target is what fixed arm sizes (a quota) look like. "
+    "That is a valid design, but then the test has nothing to detect.")
 
 thr = st.radio(
     "Fail threshold (p-value)", THRESHOLDS, index=THRESHOLDS.index(FAIL_DEFAULT), horizontal=True,
@@ -204,37 +202,42 @@ def srm_panel(n_t: int, n_c: int, share_t: float, name_t: str, name_c: str, unit
                 help="Share of all users in the treatment arm, against the share the experiment was set up with.")
     m[1].metric("p-value", fmt_p(p), f"chi-square {r['chi2']:.2f}", delta_color="off", delta_arrow="off",
                 help="Chance of a split at least this uneven if assignment worked as planned. Chi-square: sum over "
-                     "both arms of (observed - planned)² / planned; 0 = exactly as planned.")
+                     "both arms of (observed − planned)² / planned; 0 = exactly as planned.")
     counts = pd.DataFrame({
         "Arm": [name_t, name_c],
-        f"Observed {unit}": [f"{n_t:,}", f"{n_c:,}"],
-        f"Planned {unit}": [f"{r['expected_t']:,.2f}", f"{r['expected_c']:,.2f}"],
-        "Difference": [f"{n_t - r['expected_t']:+,.2f}", f"{n_c - r['expected_c']:+,.2f}"],
+        "Observed": [f"{n_t:,}", f"{n_c:,}"],
+        "Planned": [f"{r['expected_t']:,.2f}", f"{r['expected_c']:,.2f}"],
+        "Difference": [signed_count(n_t - r["expected_t"], 2), signed_count(n_c - r["expected_c"], 2)],
     })
     st.dataframe(counts, hide_index=True, width="stretch", height=table_height(2),
-                 column_config={c: st.column_config.TextColumn(alignment="right") for c in counts.columns[1:]})
+                 column_config={"Observed": st.column_config.TextColumn(alignment="right", help=f"Observed {unit}."),
+                                "Planned": st.column_config.TextColumn(
+                                    alignment="right", help=f"Planned {unit}: total × the intended share."),
+                                "Difference": st.column_config.TextColumn(alignment="right",
+                                                                          help="Observed minus planned.")})
     st.caption(f"Typical chance gap under random assignment: ±{sd:,.0f} {unit} (one standard deviation of the "
-               f"binomial count); observed gap {dev:+,.2f} ({abs(dev) / sd:.2g} SD).")
+               f"binomial count); observed gap {signed_count(dev, 2)} ({abs(dev) / sd:.2g} SD).")
     planned = f"{share_t * 100:.1f}/{(1 - share_t) * 100:.1f}"
     if status == "PASS" and q["is_nearest_integer_to_target"]:
         st.info(
-            f"**PASS, but uninformative** ({p_txt(p)}). {n_t:,} is the nearest whole number to exactly "
+            f"**PASS, but uninformative** ({p_text(p)}). {n_t:,} is the nearest whole number to exactly "
             f"{share_t * 100:.1f}% of {n_t + n_c:,} {unit} ({abs(dev):.2f} off). Random assignment would typically "
             f"miss the planned count by about {sd:,.0f} {unit}, and lands on the nearest whole number only "
-            f"{q['prob_exactly_nearest_integer'] * 100:.2f}% of the time. So the split was set by a quota (or the "
-            "export was trimmed to it): the test passes by construction and cannot detect an assignment problem.")
+            f"{q['prob_exactly_nearest_integer'] * 100:.2f}% of the time. So the split was most likely set by a fixed "
+            "quota (or the export was trimmed to it). Fixed arm sizes are a valid design; they just make this test "
+            "uninformative: it passes by construction and cannot detect an assignment problem.")
     elif status == "PASS":
-        st.success(f"**PASS** ({p_txt(p)}): the arm sizes are consistent with a planned {planned} split "
+        st.success(f"**PASS** ({p_text(p)}): the arm sizes are consistent with a planned {planned} split "
                    f"({abs(dev) / sd:.1f} SD from the planned count).")
     elif status == "WARNING":
         st.warning(
-            f"**WARNING** ({p_txt(p)}): below the {warn:g} warning line but above the {thr:g} fail line. "
-            f"{name_t} has {dev:+,.1f} {unit} against the planned count, {abs(dev) / sd:.1f} times the typical chance "
-            f"gap; a split at least this uneven happens by chance {p * 100:.1f}% of the time. The result cannot be "
-            "certified until assignment is checked.")
+            f"**WARNING** ({p_text(p)}): below the {warn:g} warning line but above the {thr:g} fail line. "
+            f"{name_t} has {signed_count(dev, 1)} {unit} against the planned count, {abs(dev) / sd:.1f} times the "
+            f"typical chance gap; a split at least this uneven happens by chance {p * 100:.1f}% of the time. The "
+            "result cannot be certified until assignment is checked.")
     else:
         st.error(
-            f"**FAIL** ({p_txt(p)}): {name_t} has {dev:+,.1f} {unit} against the planned count "
+            f"**FAIL** ({p_text(p)}): {name_t} has {signed_count(dev, 1)} {unit} against the planned count "
             f"({abs(dev) / sd:.1f} SD). If the plan really was {planned}, assignment or logging is broken and the "
             "results cannot be trusted until it is fixed.")
 
@@ -249,7 +252,8 @@ with col_ad:
              f"share, which is a round number. Try {plan_ad * 100 - 1:.0f}% to see what a mismatch looks like.")
     srm_panel(srm_ad["n_t"], srm_ad["n_c"], share_ad / 100, "ad", "PSA", "users")
     caveat(f"Uninformative, not reassuring: the {split_ad} plan is inferred from the data, and the observed split "
-           "hits it to the nearest user. Exposure parity (section 3) is the meaningful check for this experiment.")
+           "hits it to the nearest user, most likely a fixed quota. Exposure parity (section 3) is the meaningful "
+           "check for this experiment.")
 with col_gate:
     st.markdown("**Gate experiment: gate_40 vs gate_30**")
     share_gate = st.number_input(
@@ -260,49 +264,59 @@ with col_gate:
     srm_panel(srm_gate["n_t"], srm_gate["n_c"], share_gate / 100, "gate_40", "gate_30", "players")
     dec = gate["d7_decomposition"]
     ci = dec["install_level_effect_ci_if_only_reachers"]
-    caveat(f"What it means for the decision: the naive D7 gap ({dec['naive_diff'] * 100:+.2f} pp) is not certified. "
-           f"The part the gate could cause is about {dec['install_level_effect_if_only_reachers'] * 100:+.2f} pp per "
-           f"install (95% CI {ci[0] * 100:+.2f} to {ci[1] * 100:+.2f}; page 6). Keeping gate_30 is the status quo, "
-           "so the decision does not depend on certifying the result; a re-test does, after assignment is fixed.")
+    caveat(f"What it means for the decision: the naive D7 gap ({sgn_pp(dec['naive_diff'])}) is not certified. "
+           f"The part the gate could explain is {sgn_pp(dec['install_level_effect_if_only_reachers'])} per install "
+           f"({ci_text(ci[0], ci[1], unit='')}; page 6), not an estimate of its effect. Keeping gate_30 is the status "
+           "quo, so the decision does not depend on certifying the result; a re-test does, after assignment is fixed.")
 
-# -------- where is the gate imbalance?
+# -------- where is the gate imbalance? (post-hoc subsets: descriptive, no status labels)
 st.markdown("**Where is the gate experiment's imbalance?**")
 st.markdown(
-    "Players are split by how far they played. Below level 30 the two versions are identical, so players who "
-    "stopped before round 30 should be split 50/50 whatever the gate does. Same counts and rule as above "
-    "(raw assignment counts, threshold as selected).")
+    "Players are split by how many rounds they played in their first 14 days. Below level 30 the two versions are "
+    "identical and rounds ≥ levels, so a player with fewer than 30 rounds never met a gate in either version, and "
+    "both versions should hold about the same number of them. Same raw assignment counts as above. These subsets "
+    "were **chosen after seeing the warning**, so their p-values are descriptive: they locate the excess; they are "
+    "not separate checks with a verdict of their own.")
 sbs = gate["srm_by_stratum"]
-STRATA = (("All players", srm_gate),
-          ("Fewer than 30 rounds (never reached level 30)", sbs["rounds_lt_30"]),
-          ("· of which fewer than 15 rounds", sbs["rounds_lt_15"]),
-          ("30 rounds or more", sbs["rounds_ge_30"]))
+STRATA = (("All players", srm_gate, "The pre-specified check above"),
+          ("< 30 rounds (never met a gate)", sbs["rounds_lt_30"], POST_HOC),
+          ("· of which < 15 rounds", sbs["rounds_lt_15"], POST_HOC),
+          ("· of which 15–29 rounds", sbs["rounds_15_29"], POST_HOC),
+          ("30+ rounds (could have reached level 30)", sbs["rounds_ge_30"], POST_HOC))
 strata = pd.DataFrame([{
-    "Players (by rounds played)": label,
+    "Players, by rounds in first 14 days": label,
     "gate_40": f"{s['n_t']:,}",
     "gate_30": f"{s['n_c']:,}",
-    "gate_40 minus gate_30": f"{s['n_t'] - s['n_c']:+,}",
-    "gate_40 share": f"{s['observed_share_t'] * 100:.2f}%",
+    "Net excess": signed_count(s["n_t"] - s["n_c"]),
     "p-value": fmt_p(s["p_value"]),
-    "Status": srm_status(s["p_value"]),
-} for label, s in STRATA])
+    "What the p-value is": kind,
+} for label, s, kind in STRATA])
+right = {"alignment": "right", "width": 75}
 st.dataframe(strata, hide_index=True, width="stretch", height=table_height(len(strata)),
-             column_config={"Players (by rounds played)": st.column_config.TextColumn(width=330),
-                            **{c: st.column_config.TextColumn(alignment="right")
-                               for c in strata.columns[1:-1]}})
-lt15, ge30 = sbs["rounds_lt_15"], sbs["rounds_ge_30"]
+             column_config={"Players, by rounds in first 14 days": st.column_config.TextColumn(width=270),
+                            "gate_40": st.column_config.TextColumn(**right),
+                            "gate_30": st.column_config.TextColumn(**right),
+                            "Net excess": st.column_config.TextColumn(
+                                alignment="right", width=90, help="gate_40 minus gate_30 (raw assignment counts)."),
+                            "p-value": st.column_config.TextColumn(**right),
+                            "What the p-value is": st.column_config.TextColumn(width=320)})
+lt15, b1529, ge30 = sbs["rounds_lt_15"], sbs["rounds_15_29"], sbs["rounds_ge_30"]
 pre = gate["pre_gate_engagement"]
+takeaway(f"gate_40 has {srm_gate['n_t'] - srm_gate['n_c']} more installs than gate_30 in the raw log. By rounds "
+         f"played, the net excess is {signed_count(lt15['net_excess_t'])} among players with < 15 rounds "
+         f"({p_text(lt15['p_value'])}), {signed_count(b1529['net_excess_t'])} at 15–29 rounds "
+         f"({p_text(b1529['p_value'])}) and {signed_count(ge30['net_excess_t'])} at 30+ rounds "
+         f"({p_text(ge30['p_value'])}): the imbalance sits with low-engagement installs, and players who could have "
+         f"reached level 30 are balanced in number. Pre-gate play (rounds capped at 29) is lower in gate_40 "
+         f"({p_text(pre['mannwhitney_p'])}), but that is the same imbalance seen as a distribution, not independent "
+         f"evidence (within < 30 rounds, {p_text(pre['mannwhitney_p_within_lt_30'])}).")
 nc7 = gate["negative_control"]["never_reached_30"]["retention_7"]
-takeaway(f"The imbalance sits among low-engagement installs: {gate['excess_players_with_lt_15_rounds']} of "
-         f"gate_40's {srm_gate['n_t'] - srm_gate['n_c']} extra players played fewer than 15 rounds "
-         f"({p_txt(lt15['p_value'])} for that split), while players with 30 or more rounds are balanced "
-         f"({p_txt(ge30['p_value'])}). Play before round 30 is identical by design, yet it differs between the "
-         f"versions ({p_txt(pre['mannwhitney_p'])}), and players who never met a gate retain "
-         f"{abs(nc7['abs_lift']) * 100:.2f} pp less on D7 under gate_40 ({p_txt(nc7['p_value'])}): the arms differ "
-         "in who was assigned or logged, not only in what the gate did.")
-st.caption(f"Raw assignment counts, so gate_40's excess is {srm_gate['n_t'] - srm_gate['n_c']} here and "
-           f"{gate['worst_case_bound']['excess_players_gate_40']} in the cleaned data used for the retention "
-           "comparisons (the dropped player was in gate_30).")
-page_link("views/p6_gate_experiment.py", "Gate experiment: what the gate could have caused")
+st.caption(f"These are raw assignment counts, so gate_40's excess here is {srm_gate['n_t'] - srm_gate['n_c']}. The "
+           f"retention comparisons use the cleaned data, where it is "
+           f"{gate['best_case_for_gate_40']['excess_players_gate_40']} (the dropped player was in gate_30). Players "
+           f"who never met a gate also show D7 {abs(nc7['abs_lift']) * 100:.2f} pp lower in gate_40 "
+           f"({p_text(nc7['p_value'])}, borderline on its own); page 6 shows where that gap sits.")
+page_link("views/p6_gate_experiment.py", "Gate experiment (page 6)")
 
 # ------------------------------------------------------------------ 3 · exposure parity and balance
 st.subheader("3 · Exposure parity: the meaningful check for the ad experiment")
@@ -384,13 +398,14 @@ the logging around it, is broken. Change the planned split or the threshold and 
 
 **Why the ad experiment's SRM pass is uninformative.** Nobody documented the planned split; {split_ad} is inferred
 from the data, and the observed count is the nearest whole number to it. A fair coin almost never does that, so the
-split was set by a quota (or the file was trimmed to it), and a test of the split has nothing left to detect. The
-meaningful check is **exposure parity**: both arms were served the same number of ad slots, so the only planned
-difference is what the slot showed.
+split was most likely set by a fixed quota (or the file was trimmed to it). Fixed arm sizes are a valid design; they
+just leave a test of the split nothing to detect. The meaningful check is **exposure parity**: both arms were served
+the same number of ad slots, so the only planned difference is what the slot showed.
 
 **Where is the gate imbalance?** Splitting players by how far they played locates the problem. Before level 30 the
-two versions are identical, so any imbalance among players who stopped early comes from assignment or logging, not
-from the gate. Page 6 shows how much of the D7 gap that explains.
+two versions are identical, so an imbalance among players who stopped early comes from assignment or logging, not
+from the gate. The splits were chosen after seeing the warning, so their p-values describe where the excess sits;
+read the net excess column, not a verdict. Page 6 shows what this means for the D7 gap.
 
 **Balance charts.** For the chosen field, the grey and blue bars show how each arm's users are spread across
 categories. Similar bars mean the arms look alike. The p-value is tiny because the sample is huge; **Cramér's V**
@@ -398,11 +413,14 @@ measures how big the difference is, and the {min(cramers):.3f} to {max(cramers):
 
 **Common misreadings.**
 - "The ad test's split is exactly {split_ad}, so assignment was perfect." The opposite: random assignment almost
-  never lands exactly on target. A perfect split means a quota, and the SRM test then cannot detect anything.
+  never lands exactly on target. A split this exact most likely means fixed arm sizes (a quota): a valid design,
+  but the SRM test then cannot detect anything.
 - "p < 0.0001 on the balance test means randomization failed." No: with {n_ad_users:,} users any tiny difference
   is significant, and these fields are measured after assignment anyway.
 - "SRM passed, so everything is fine." SRM only checks arm sizes. It cannot catch a bug that keeps sizes right
   but sends different kinds of users to each arm.
+- "The < 15-rounds band has the small p-value, so that band failed." The bands were picked after seeing the
+  warning; their p-values describe where the excess sits, they are not separate checks.
 - "The gate result is wrong because of the SRM warning." Not exactly: it cannot be certified, and part of the naive
   gap comes from the imbalance rather than the gate.
 """)

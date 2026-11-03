@@ -1,18 +1,18 @@
-# Readout: Ad Campaign Test (with the Gate Test and New-User Retention)
+# Readout: Ad Campaign Test, New-User Retention and the Gate Test
 
-**For:** Growth PM · **Also for:** Game PM (section 2), Onboarding PM (section 3), media buyer · **From:** Product Analyst, Growth · **Date:** 2026-11-03 · Prepared for the Growth weekly
+**For:** Growth PM · **Also for:** Onboarding PM (section 2), Game PM (section 3), media buyer · **From:** Product Analyst, Growth · **Date:** 2026-11-03 · Prepared for the Growth weekly
 
 ## TL;DR / Decision
 
 | Your question | Short answer | Decision |
 |---|---|---|
-| Did the ad campaign drive conversions? | **Yes.** Users who saw the ads converted at 2.55%. Users shown a public-service announcement (PSA) in the same slot converted at 1.79%. That is **+0.77 pp (+43%)**, and we're 95% confident the lift is between +0.59 and +0.94 pp. It adds up to about **4,300 extra conversions**, which is only about **30% of the ad group's conversions**: the rest would have happened anyway. | **Keep it running**, with a permanent 5% PSA holdout (R1). |
-| Is it worth doubling the budget? | **This test can't tell us.** It compared ads with no ads, not 1× with 2× spend. Almost all of the extra conversions came from heavy app users; the two-thirds of users who saw 20 ads or fewer show no measurable lift. At an assumed USD 50 per conversion, today's campaign pays back only if we pay less than **USD 15.49 per 1,000 impressions**. | **Don't double yet. Test 2× budget or a cap on ads per person first** (R2). |
-| Should we move spend to the best days or hours? | **No.** There is a modest day-of-week pattern, but it describes *when users are active*, not slots we can buy. By hour or time of day there is no reliable difference. | **Don't re-plan spend.** If timing matters, run a planned time-of-day test (R3). |
-| Which new users leave first? | **Players who barely start.** 55% of new players don't come back the day after installing. 47% play fewer than 15 rounds in their first two weeks, and at most 3.4% of them play on Day 7. Coming back on Day 1 is the earliest strong sign of who stays. | **Test a Day-1 re-engagement change** (R6). |
-| Should the first game gate move from level 30 to 40? | **No.** Level 40 shows 0.82 pp lower Day-7 retention, but the two test groups were unbalanced from the start, so that number overstates the likely effect. The part that could be the gate is about 0.3 pp, and it may be zero. Nothing suggests level 40 helps. | **Keep level 30.** Fix the test's assignment before any re-test (R5). |
+| Did the ad campaign drive conversions? | **Yes.** Users who saw the ads converted at 2.55%. Users shown a public-service announcement (PSA) in the same slot converted at 1.79%. That is **+0.77 pp (+43%)**, and we're 95% confident the lift is between +0.59 and +0.94 pp. It adds up to about **4,300 extra conversions** (95% range 3,300–5,300), which is only about **30% of the ad group's conversions**: the rest would have happened anyway. | **Keep it running**, with a permanent 5% PSA holdout (R1). |
+| Is it worth doubling the budget? | **This test can't tell us.** It compared ads with no ads, not 1× with 2× spend. Essentially all of the extra conversions come from users who saw 36–200 ads (17% of ad users); the two-thirds of users who saw 20 ads or fewer show no lift we could measure. At an assumed USD 50 per conversion, today's campaign pays back only if we pay less than **USD 15.49 per 1,000 impressions**. | **Don't double yet. Test it first:** one group of users gets up to 2× today's ads per person, or a cap on ads per person (R2). |
+| Should we move spend to the best days or hours? | **No.** There is a modest day-of-week pattern, but it describes *when users are active*, not slots we can buy. By hour or time of day there is no reliable difference. | **Don't re-plan spend.** If timing matters, pre-register a test that randomizes the delivery schedule (R3). |
+| Which new users leave first? | **Players who barely start.** These retention cuts are on the installs of our mobile game, Cookie Cats (the company's other product), because the ad test's data has no retention field. 55.5% of new players don't come back the day after installing. 47% play fewer than 15 rounds in their first two weeks, and only 2.3% of them play on Day 7. Coming back on Day 1 is the earliest strong sign of who stays. | **Test a Day-1 re-engagement change** for new players who play little on their first day (R6). |
+| Should the game's first gate move from level 30 to 40? | **No.** Level 40 shows 0.82 pp lower Day-7 retention, but the two test groups were unbalanced from the start, so that number overstates whatever the gate does. The part the gate could explain is about 0.3 pp per install, and even that may not be the gate. There is no sign that level 40 helps retention. | **Keep level 30.** Fix the test's assignment before any re-test (R5). |
 
-The next experiments also need a less lopsided split, logged dates, guardrails agreed in advance and an automatic check that the groups stay the planned size (R4).
+The next experiments also need a less lopsided split, logged dates, guardrails agreed in advance and an automatic daily check that the groups stay the planned size (R4).
 
 *How to read the numbers: pp = percentage points, so 2.55% vs 1.79% is +0.77 pp, which is +43% in relative terms. A "95% range" is the range we're 95% confident contains the true value. Differences are computed before rounding.*
 
@@ -34,9 +34,10 @@ Showing the campaign's ads instead of a PSA in the same ad slot increases the sh
 - **Guardrails we'd want but this data lacks:** unsubscribe / complaint rate and cost per acquisition.
 
 ### Design & sample
-- 588,101 users were split at random: **564,577 (96%) saw the ads and 23,524 (4%) saw a PSA** in the same slots.
+- 588,101 users in two groups: **564,577 (96%) saw the ads and 23,524 (4%) saw a PSA** in the same slots.
 - There is one row per user, and conversion is yes / no. The data doesn't name the conversion event and has no dates.
-- The 96/4 split keeps most users on ads during the test, but it makes the test blunt. It could reliably pick up only lifts of **0.26 pp (14%) or more**. For the smallest lift we'd act on, 10% (0.18 pp), it had about a **coin-flip chance (51%)** of detecting it. The same users split 50/50 would have caught it almost every time.
+- The 96/4 split keeps most users on ads during the test, but it makes the test blunt. It could reliably pick up only lifts of **0.26 pp (14%) or more**.
+- We assumed the smallest lift worth acting on is 10% (0.18 pp: about 1,000 conversions per 565K-user ad flight, about USD 50K at USD 50). In practice the Growth PM and Finance agree that number before launch. For a lift that size this test had about a **coin-flip chance (51%)** of detecting it; the same users split 50/50 would have had a ≈100% chance.
 
 ### Results
 
@@ -49,22 +50,24 @@ Showing the campaign's ads instead of a PSA in the same ad slot increases the sh
 **The lift is real.**
 - **+0.77 pp (+43%).** We're 95% confident the true lift is between **+0.59 and +0.94 pp** (+30% to +58%). With this many users, a gap this size essentially never appears by chance.
 - **About 4,300 extra conversions** (95% range 3,300–5,300) came from 14.0 million ad impressions: roughly 1 extra conversion per 3,200 impressions.
-- **Only about 30% of the ad group's conversions were caused by the ads** (95% range 23–37%). A simple last-touch count, which credits the campaign with every conversion by someone who saw an ad, would overstate it **3.3×**: it would claim all 14,423 conversions instead of about 4,300.
+- **Only about 30% of the ad group's conversions were caused by the ads** (95% range 23–37%). Last-touch attribution, which credits the campaign with every conversion by someone who saw an ad, would overstate it **3.3×** (95% range 2.7–4.3×): it would claim all 14,423 conversions instead of about 4,300. Every ad-group user saw at least one ad, so last-touch and any-touch counting give the same answer here.
 
 **Can we trust the test?**
-- **The group sizes can't tell us.** The split is exactly 96.000% / 4.000%: the closest whole number of users to 96%. A random split lands that close only about 3 times in 1,000, so users were most likely assigned to a fixed quota, or the data file was trimmed to one. Either way, the usual group-size check passes automatically and proves nothing.
+- **The group sizes can't tell us.** The split lands exactly on 96% / 4%, to the nearest user. That most likely means a fixed quota (or a data file trimmed to one): a valid design, but the usual group-size check then passes automatically and proves nothing (detail: DQ check EXP-1).
 - **The ad-slot check is reassuring.** Both groups were shown 24.8 ad slots per user on average. The spread differs a little (33% of PSA users vs 30% of ad users saw 1–5; 18% vs 22% saw 11–20), so we use ad counts only to describe patterns, never to adjust the headline result.
 
 **What it's worth (illustrative only).** At an assumed USD 50 per conversion, the extra conversions are worth about USD 217K (95% range USD 166K–264K). The campaign breaks even at up to **USD 15.49 per 1,000 impressions** (95% range USD 11.83–18.85). Below USD 11.83 it pays back even in the pessimistic case.
 
 **Days and hours (where to spend).**
-- Users whose busiest ad day was **Tuesday** responded more (+0.92 pp above the other days) and **Thursday** users less (0.76 pp below). The signal is modest, and it holds up after allowing for how many cuts we looked at.
-- But "busiest ad day" describes the user's habits (when they happen to use the app), not a day we can buy. Moving budget to Tuesdays is a different change, and this test didn't make it.
+- Users whose busiest ad day was **Tuesday** responded more (+0.95 pp above the other days; 95% range +0.43 to +1.42) and **Thursday** users less (0.74 pp below; 95% range 0.27 to 1.25 below). The signal is modest, and it holds up after allowing for how many cuts we looked at.
+- Part of Tuesday's gap is a low control rate: Tuesday's PSA group converted at 1.44% (42 of 2,907 users), one of the lowest rates of the week.
+- "Busiest ad day" describes the user's habits (when they happen to use the app), and it was recorded during the test, not chosen in advance. It is not a day we can buy. Moving budget to Tuesdays is a different change, and this test didn't make it.
 - **By hour there is no reliable difference.** Grouped into four time-of-day blocks, the only apparent difference comes from the night (midnight to 6 am), where the PSA group had just 1 conversion among 735 users. Without the night, nothing remains.
 
 **Number of ads seen (relevant to the budget question).**
-- **Two-thirds of users (66%) saw 20 ads or fewer, and they show no measurable lift.**
-- Users who saw 36–200 ads show +1.7 to +7.0 pp. They are 17% of the ad group but account for **98% of the extra conversions**.
+- **Two-thirds of users (66%) saw 20 ads or fewer, and they show no lift we could measure** (−0.02 pp; a lift above about 0.18 pp, +35% on their 0.5% base, would have shown).
+- **The next 15% of ad users (21–35 ads) are inconclusive:** +0.27 pp, with a 95% range from −0.21 to +0.66 pp.
+- **Users who saw 36–200 ads (17% of ad users) show +1.7 to +7.0 pp, and essentially all of the extra conversions come from them** (98% of the bucket-by-bucket total; see M4a in the metric definitions).
 - Above 200 ads we can't tell: the 95% range runs from −4.9 to +4.1 pp, with only 258 PSA users.
 - Heavier app users see more ads *and* convert more anyway: in the PSA group, conversion rises from 0.3% (1–5 ads) to 15.5% (200+). So the lift lives in heavy users; this does **not** show that more ads per person cause more lift. It is a lead for a test that varies how many ads each person sees, not a finding.
 
@@ -72,9 +75,9 @@ Showing the campaign's ads instead of a PSA in the same ad slot increases the sh
 
 | Question | Decision |
 |---|---|
-| Keep the campaign? | **Ship: keep it running at the current budget**, with a permanent 5% PSA holdout (a small group that keeps seeing the PSA, so we keep measuring what the ads add). The holdout costs about 226 conversions per 588K-user flight, about USD 11.3K at USD 50 per conversion (R1). |
-| Double the budget? | **Re-test first:** a randomized 2× budget or ads-per-person cap test before any scale-up (R2). |
-| Move spend by day / hour? | **Don't ship.** If timing still matters, run a planned time-of-day test with the comparison agreed in advance (R3). |
+| Keep the campaign? | **Ship: keep it running at the current budget**, with a permanent 5% PSA holdout (a small group that keeps seeing the PSA, so we keep measuring what the ads add). Versus no holdout it forgoes about 226 conversions per 588K-user flight, about USD 11.3K at USD 50 per conversion. This test's 4% PSA group already forgoes about 181, so moving to 5% costs about 45 more (R1). |
+| Double the budget? | **Re-test first:** a user-level test in which one group gets up to 2× today's ads per person (the closest stand-in for 2× budget), or a cap on ads per person, before any scale-up. A true budget test needs a split by region (R2). |
+| Move spend by day / hour? | **Don't ship.** If timing still matters, pre-register a test that randomizes the delivery schedule, e.g. Tuesday vs. Thursday delivery (R3). |
 
 ### Risks & caveats
 - **Profit is unconfirmed.** USD 50 per conversion is our assumption, not a Finance number, and the data doesn't say what we pay per 1,000 impressions. Above the breakeven price, the campaign loses money despite the real lift. The breakeven also ignores creative and agency costs.
@@ -85,18 +88,38 @@ Showing the campaign's ads instead of a PSA in the same ad slot increases the sh
 - **Day, hour and ad-count patterns** describe what happened during the test. Don't use them to target users or move budget without a new test.
 
 ### Next steps
-1. Finance confirms the actual CPM and the margin per conversion, and we re-run the breakeven. The dashboard's Experiment Readout page takes both as inputs.
-2. The ad platform team shares the experiment's allocation settings, so we can confirm the 96/4 design and whether a quota was used.
-3. Set up the always-on 5% PSA holdout (R1).
-4. Size the 2× budget / ads-per-person test with the sample-size calculator on the dashboard's Decision page (R2).
-5. Apply the design fixes to the next test (R4).
+1. **Finance + Growth PM:** confirm the actual CPM and the margin per conversion; Analytics re-runs the breakeven. The dashboard's Experiment Readout page takes both as inputs.
+2. **Eng (ad platform team):** share the experiment's allocation settings, so we can confirm the 96/4 design and whether a quota was used.
+3. **Growth PM + Eng:** set up the always-on 5% PSA holdout (R1).
+4. **Growth PM + media buyer, with Analytics:** design the 2× ads-per-person or ad-cap test (R2), with users grouped by how active they were *before* the test. Size it with the sample-size calculator on the dashboard's Decision page, and expect to need more than 181K users.
+5. **Analytics + Eng:** apply the design fixes to the next test (R4).
 
 ---
 
-## 2. Gate test (Cookie Cats): move the first gate from level 30 to level 40?
+## 2. Which new users leave first?
+
+*These cuts are on the installs of our mobile game, Cookie Cats (one 2017 install cohort), the company's other product: the ad test's data has no retention field. Expect the pattern to carry over to the app, not the exact segment sizes.*
+
+- **Day 1 is the cliff.** 95.6% of new players play at least one round, but only 44.5% come back on Day 1 and 18.6% play on Day 7 (14.6% on both Day 1 and Day 7). 55.5% of installs don't return on Day 1: the biggest single loss, 51 pp of installs, is between the first session and Day 1.
+- **Players who barely start leave first.** Half of new players play 16 rounds or fewer in their first 14 days. 47% play fewer than 15, and only 2.3% of them play on Day 7 (at most 3.4% in any of their round bands), compared with 71% of players with 100+ rounds. Rounds are counted over the first 14 days, which include Day 7, so this *sizes* the early-leaver group. It is not a rule for spotting them on their first day.
+- **Coming back on Day 1 is the earliest strong signal of who stays.** Players who return on Day 1 are 4.6× as likely to play on Day 7 (32.8% vs 7.2%). That is an association: it doesn't show that prompting a Day-1 visit would lift Day 7. As a ceiling, not a forecast: each 1 pp of installs moved from "no Day-1 return" to "returned" is worth at most about 0.26 pp of Day-7 retention, and only if those players then behaved like today's Day-1 returners.
+- **Few players ever see the first gate.** At most about 37% of installs played the 30 rounds needed to reach level 30.
+- **The gate version is the smallest lever.** The two versions differ by 0.8 pp on Day 7, but most of that is the assignment problem; the part that could be the gate is about 0.3 pp, and it may be zero (section 3). Engagement, by comparison, separates Day-7 retention by 70 pp between the least and most engaged players (partly by construction, as above).
+- **Data notes.** 87 players who never played a round are flagged as coming back on Day 1 (29 on Day 7), so the flags mean "came back to the game", not "played a round". That is about 0.1% of players, and no conclusion depends on it. The data has no install dates, so all players are treated as one group of new installs. Re-run these cuts on the app's own installs before relying on exact segment sizes.
+
+### Decision
+**Test a Day-1 re-engagement change (R6)** for new players who play little on their first day, with Day-7 retention as the primary metric. Lifting Day 7 by 0.5 pp on the 2.3% base (a placeholder target to agree with the Onboarding PM) needs about 31K target players, about 66K installs, at 50/50.
+
+### Next steps
+1. **Onboarding PM + CRM:** design the Day-1 re-engagement test (R6), with Day 7 as the primary metric and Day 1 as secondary, and agree the target lift.
+2. **Analytics + Eng:** log first-day play, so the test can pick players on their first day rather than on 14-day rounds.
+
+---
+
+## 3. Gate test (Cookie Cats): move the first gate from level 30 to level 40?
 
 ### TL;DR / Decision
-**Don't ship level 40. Keep the gate at level 30.** The raw comparison shows 0.82 pp lower Day-7 retention for level 40, but the two groups were not comparable: level 40 received about 790 extra players, almost all of whom barely played, long before either gate could matter. Once we set aside what the gate can't have caused, the part that could be the gate is about 0.3 pp, and it may be zero. Nothing suggests level 40 helps, so we keep the current game and fix the test first. **This result is not certified.**
+**Don't ship level 40. Keep the gate at level 30.** The raw comparison shows 0.82 pp lower Day-7 retention for level 40, but the two groups were not comparable: level 40 received about 790 extra installs (789 in the raw log), and the excess sits among players who barely played, long before either gate could matter. About 60% of the raw gap sits where the gate cannot act. The part the gate could explain is about 0.3 pp per install, and even that may not be the gate. There is no sign of a retention benefit from level 40, so we keep the current game and fix the test first. **This result is not certified.**
 
 ### What we tested
 - **Hypothesis:** moving the first gate (a forced wait, or pay to skip) from level 30 to level 40 keeps more new players coming back by Day 7.
@@ -110,71 +133,65 @@ Showing the campaign's ads instead of a PSA in the same ad slot increases the sh
 |---|---|---|---|
 | Day-7 retention | 19.02% | 18.20% | −0.82 pp (−1.33 to −0.31) |
 | Day-1 retention | 44.82% | 44.23% | −0.59 pp (−1.24 to +0.06) |
-| Rounds played | median 17 | median 16 | no difference in the average (−0.04 rounds, 95% range −1.4 to +1.3) |
+| Rounds played | median 17 | median 16 | −0.04 rounds on average (95% range −1.4 to +1.3) |
 
-Taken at face value, this says level 40 costs Day-7 players. It can't be taken at face value.
+Taken at face value, level 40 looks worse on Day 7. It can't be taken at face value, and the other two rows carry the same problem.
 
 ### Why the raw gap isn't trustworthy
-- **The groups are the wrong size.** Level 40 has about 790 more players than level 30. A fair 50/50 split produces a gap this large less than 1 time in 100.
-- **The extra players are almost all people who barely played.** 762 of the roughly 790 extra level-40 players played fewer than 15 rounds, far short of either gate. Among players with 30 or more rounds, the two groups are the same size.
-- **The groups differed before any gate.** Both versions are identical until level 30, yet level-40 players already played slightly less in their first 29 rounds, by more than chance would explain.
-- **A group the gate couldn't affect still shows a gap.** Players who never reached level 30 met no gate in either version, so their retention should match. It doesn't: level 40 is 0.33 pp lower on Day 7 (95% range −0.65 pp to just below 0).
+- **The groups are the wrong size.** Level 40 has about 790 more installs than level 30 (789 in the raw log). A fair 50/50 split produces a gap this large less than 1 time in 100.
+- **The excess sits among players who barely played.** Level 40 has a net 762 more players with fewer than 15 rounds, far short of either gate. Among players with 30 or more rounds, the two groups are balanced (16,613 vs 16,656).
+- **The same gap shows in play before any gate.** Both versions are identical until level 30, yet level-40 players played slightly less in their first 29 rounds. That is consistent with the point above (more low-play installs in level 40), not independent evidence.
+- **A group the gate couldn't affect is slightly lower.** Players who never reached level 30 met no gate in either version, so their retention should match. In level 40 it is slightly lower on Day 7 (−0.33 pp, 95% range −0.65 pp to just below 0), right at the edge of what chance would explain. That gap sits with players who played 15–29 rounds (−0.87 pp, and the two groups are balanced in number there), not with the extra installs below 15 rounds (−0.09 pp). Setting aside the net 762 extra low-play installs only moves it to −0.22 pp.
 
-So something other than the gate, most likely how players were assigned or logged, made the level-40 group weaker from the start.
+So the groups were not comparable from the start. The extra low-play installs explain the size gap and the player-mix part of the Day-7 gap, but not the small gap among players who never met a gate, which may be chance.
 
 ### What part could be the gate
 
-| Part of the −0.82 pp Day-7 gap | Size | Could it be the gate? |
+| Part of the −0.82 pp Day-7 gap (per install) | Size | Could it be the gate? |
 |---|---|---|
-| Different player mix (more low-engagement players in level 40) | −0.29 pp | No |
-| Players who never reached a gate | −0.21 pp | No |
-| Players who could have met the gate | **−0.32 pp** of installs (95% range −0.71 to +0.07) | Yes: the only part that can be |
+| Different player mix (more low-play players in level 40) | −0.29 pp | No |
+| Players who never met a gate (fewer than 30 rounds) | −0.21 pp | No |
+| Players who could meet the gate (30+ rounds) | **−0.32 pp** (95% range −0.71 to +0.07) | Only this part could be, and even it may not be |
 
-- Among players who reached level 30, level 40 kept 0.87 pp fewer on Day 7 (95% range −1.94 to +0.20), so the true effect could be zero.
-- Even in the most favourable case for level 40, where none of the roughly 790 extra players came back on Day 7, level 40 would still trail by 0.50 pp. Every cut points the same way: no sign of a benefit.
-- **Guardrails:** players in both versions played the same amount. On Day 1, a drop of up to 1.2 pp can't be ruled out.
+- **About 60% of the raw gap sits where the gate cannot act** (the first two rows).
+- **−0.32 pp is the part the gate could explain, not an estimate of what the gate does.** Players with 15–29 rounds never met a gate, yet they show the same 0.87 pp Day-7 gap as players with 30+ rounds, so even this part may not be the gate. Per 10,000 installs it is about 32 fewer Day-7 players (95% range 71 fewer to 7 more).
+- **"Could meet the gate" means 30 or more rounds.** The data has no level field, and every level takes at least one round, so only players with 30+ rounds could have reached level 30. It is an approximation: a level-30 player who reached the gate in exactly 29 rounds and stopped would be counted below 30, which pushes the other way from the gaps we see.
+- **Best case for level 40:** even if none of the roughly 790 extra installs ever came back, level 40 would still trail by 0.50 pp on Day 7 (95% range −1.01 to +0.02), a range that includes zero. No cut shows a benefit on Day 7.
+- **Guardrails, read where the gate can act.** The raw Day-1 and rounds rows carry the same imbalance as Day 7, so we read them among players who could meet the gate:
+  - **Day 1:** no difference (+0.08 pp, 95% range −0.78 to +0.94).
+  - **Play:** level-40 players play a little more (median 75 vs 72 rounds; 83.2% vs 81.4% play 40 or more rounds). The later gate does buy some extra play, but these players' Day-7 retention is not higher (−0.87 pp, 95% range −1.94 to +0.20): no sign of a retention benefit.
 
 ### Decision
-**Keep the gate at level 30 (R5).** It is the current experience, nothing suggests level 40 helps, and the direction is negative. The raw −0.82 pp overstates the likely effect. Our best estimate of what the gate itself does is about −0.3 pp of installs, roughly 145 fewer Day-7 players per 45,000 installs, with a 95% range from about 320 fewer to about 30 more. **The result is not certified** until the assignment problem is explained.
+**Keep the gate at level 30 (R5).** It is the current experience, and there is no sign of a retention benefit from level 40. The raw −0.82 pp overstates whatever the gate does: the part the gate could explain is about −0.3 pp per install (about 32 fewer Day-7 players per 10,000 installs; 95% range 71 fewer to 7 more), and even that may not be the gate. Level 40 does let players who reach level 30 play a little more, so if the Game PM values that, a clean re-test is the way to decide. **The result is not certified** until the assignment problem is explained.
 
 ### Risks & caveats
-- If level 40 truly makes no difference, keeping level 30 costs nothing. If it truly hurts, only a clean re-test can size the harm.
-- "Reached level 30" is estimated from rounds played, because the data has no level field. That blurs the estimate for players who met the gate.
-- The data comes from a mobile game in 2017, not our app.
+- If level 40 truly makes no difference, keeping level 30 gives up nothing. If it truly helps or hurts a little, only a clean re-test can tell.
+- "Could meet the gate" is estimated from rounds played, because the data has no level field (see above).
+- The data has no install dates, so we can't check whether the gap changed while the test ran.
 
 ### What to fix before any re-test
-1. **Eng + Analytics:** find out why level 40 received about 790 extra low-engagement installs. Compare assignment logs by date, platform, app version and country; check for duplicate or bot installs; check whether players were assigned at install or at first launch, and whether either version failed to log players who left at once.
-2. **Re-test only if the gate position matters commercially**, after the fix, with an automatic daily check that the groups stay 50/50. Detecting a 0.87 pp change among players who reach the gate needs about 102,000 such players: about 276,000 installs at 50/50.
-3. In any re-test, read Day-7 retention among players who reach level 30 as the main result, with Day-1 retention and rounds played as guardrails.
-
----
-
-## 3. Which new users leave first?
-
-- **Day 1 is the cliff.** 95.6% of new players play at least one round, but only 44.5% come back on Day 1 and 18.6% play on Day 7 (14.6% on both Day 1 and Day 7). The biggest single loss, 51 pp of installs, is between the first session and Day 1.
-- **Players who barely start leave first.** Half of new players play 16 rounds or fewer in their first 14 days. 47% play fewer than 15, and at most 3.4% of them play on Day 7, compared with 71% of players with 100+ rounds. Rounds are counted over the first 14 days, which include Day 7, so this *sizes* the early-leaver group. It is not a rule for spotting them on their first day.
-- **Coming back on Day 1 is the earliest strong signal of who stays.** Players who return on Day 1 are 4.6× as likely to play on Day 7 (32.8% vs 7.2%). That is an association: it doesn't show that prompting a Day-1 visit would lift Day 7.
-- **Few players ever see the first gate.** At most about 37% of installs played the 30 rounds needed to reach level 30.
-- **The gate version is a smaller lever.** It moves Day-7 retention by 0.8 pp, against 70 pp between the least and most engaged players. That is small next to engagement, but large enough to decide the gate question.
-- **Data notes.** 87 players who never played a round are flagged as coming back on Day 1 (29 on Day 7), so the flags mean "came back to the game", not "played a round". That is about 0.1% of players, and no conclusion depends on it. The data has no install dates, so all players are treated as one group of new installs. It is a mobile game standing in for our app: re-run these cuts on our own installs before relying on exact numbers.
+1. **Eng + Analytics:** find out why level 40 received about 790 extra installs, with the net excess among players who barely played. Compare assignment logs by date, platform, app version and country; check for duplicate or bot installs; check whether players were assigned at install or at first launch, and whether either version failed to log players who left at once.
+2. **Game PM, with Analytics:** re-test only if the gate position matters commercially, and only after the fix. Agree in advance the smallest Day-7 change worth acting on; we suggest 0.5 pp per install as a placeholder (about 2.6% of level 30's 19.0%). With the main analysis fixed in advance among players who reach level 30 (both versions are identical until then, so who reaches it can't depend on the gate), that needs about 42K such players: about 114K installs at 50/50. Read over all installs, it needs about 191K. If the true effect is smaller than 0.5 pp, it would not change the decision.
+3. **Analytics + Eng:** run an automatic daily check that the groups stay 50/50, and read Day-1 retention and rounds played as guardrails among players who reach level 30.
 
 ---
 
 ## Recommendations
 
-| # | Who | What | Expected impact | How to measure | Risk |
+| # | Owner | What | Expected impact | How we'll measure | Main risk |
 |---|---|---|---|---|---|
-| R1 | Growth PM | Keep the ad campaign running at the current budget, with an always-on 5% PSA holdout. | ≈ 4,300 extra conversions per comparable flight (95% range 3,300–5,300). The holdout costs ≈ 226 conversions per 588K-user flight (≈ USD 11.3K at USD 50) and keeps the campaign's real effect measured: last-touch counting would overstate it 3.3×. | Extra conversions and cost per extra conversion against the holdout, every flight. | Value per conversion and CPM are unknown: Finance confirms we pay less than USD 15.49 per 1,000 impressions (USD 11.83 in the pessimistic case). A 5% holdout gives a read about as precise as this test, so judge trends over several flights. |
-| R2 | Growth PM + media buyer | Don't double blindly. Run a randomized 2× budget or ads-per-person cap (frequency cap) test, with a 50/50 or 80/20 split, sized with the dashboard calculator. | Shows what the *extra* spend returns before we commit to it. 98% of today's extra conversions come from the 17% of ad-group users who saw 36–200 ads, so the test should report heavy and light users separately, grouped by activity from before the test. | Extra conversions per extra USD 1K spent (marginal return on ad spend). | The test needs enough users: about 181K at 50/50 to see a 10% change, vs about 1.18M at 96/4. Heavy users may tire of more ads, which this test couldn't measure. |
-| R3 | Media buyer | Don't re-plan spend by day or hour. If timing matters, run a planned time-of-day test with the comparison agreed in advance. | Avoids moving budget on a pattern that describes when users are active, not what we can buy. | Lift by bought time slot in a randomized test. | Missing a small real timing effect. |
-| R4 | Analytics + Eng | Fix the next test's design: a 50/50 or 80/20 split instead of 96/4; logged assignment dates and times; a primary metric and guardrails (unsubscribe / complaint rate, cost per acquisition) agreed before launch; an automatic daily check that group sizes match the plan. | At 96/4 this test had a 51% chance of detecting a 10% lift; the same users split 50/50 would have caught it almost every time, and would detect lifts of 0.10 pp instead of 0.26 pp. Dates show whether the effect fades. | Detectable lift and launch checklist reviewed before the next test starts; the group-size check runs daily. | A bigger control group means more users miss the ads during the test. The logging is extra work for Eng. |
-| R5 | Game PM | Keep the first gate at level 30 (no change). Eng + Analytics fix assignment / logging first (level 40 received about 790 extra low-engagement installs). Re-test only if the gate position matters commercially. | Avoids a change with no sign of benefit. If level 40 does hurt, the likely size is about 0.3 pp of installs (≈ 145 Day-7 players per 45,000 installs), and it may be zero. | Any re-test: about 276K installs at 50/50, a group-size check that passes, and Day-7 retention among players who reach level 30 as the main result. | Quoting the raw −0.82 pp would overstate the effect. A Day-1 drop of up to 1.2 pp can't be ruled out. |
-| R6 | Onboarding PM | Focus retention work on the step from first session to Day 1: a randomized Day-1 re-engagement test for new players who play little on their first day, with Day-7 retention as the primary metric. | Targets the biggest drop: 47% of installs play fewer than 15 rounds, and at most 3.4% of them play on Day 7. The size of the gain is unknown until tested. | Day-7 retention (primary) and Day-1 retention (secondary) in the test. | Rounds here are counted over 14 days and overlap Day 7, so the real targeting rule must use first-day play. The link between playing more and staying may not be causal. Notification fatigue. |
+| R1 | Growth PM | Keep the campaign at the current budget, with an always-on 5% PSA holdout. | ≈4,300 extra conversions per comparable flight (95% range 3,300–5,300). The holdout forgoes ≈226 conversions per 588K-user flight (≈USD 11.3K at USD 50) vs. no holdout; this test's 4% PSA group already forgoes ≈181. It keeps the real effect measured: last-touch would overstate it 3.3× (95% range 2.7–4.3×). | Extra conversions and cost per extra conversion vs. the holdout, per flight and at least quarterly. | Value per conversion and CPM are unknown: Finance confirms the actual CPM is below USD 15.49 (USD 11.83 at the pessimistic end). One flight's holdout read is about as precise as this test; judge trends over several flights. |
+| R2 | Growth PM + media buyer | Don't double blindly; test it. A user-level test where one group gets up to 2× today's impressions per user (the closest stand-in for 2× budget) or a frequency cap; 50/50 or 80/20; users tiered by activity measured *before* the test. A true budget test needs a geo (region) split. | Learn the marginal return before committing ≈2× spend. Today's lift sits in the 17% of ad users who saw 36–200 ads, so the average return may not hold at 2×. | Extra conversions per extra USD 1K spent (marginal return on ad spend). | The 2×-vs-1× difference will be smaller than ads-vs-PSA, so expect to need more than the 181K users (50/50) that a 10% ads-vs-PSA lift needs. Heavy users may tire of more ads (not measurable here). |
+| R3 | Media buyer | Don't re-plan spend by day or hour. If timing matters, pre-register a test that randomizes the delivery schedule (weekday and time slot, e.g. Tuesday vs. Thursday delivery). | Avoids moving money on a pattern that describes users' habits, not slots we buy. | Difference in lift between randomized delivery slots, with its 95% range. | Missing a small real timing effect. |
+| R4 | Analytics + Eng | Fix the next test's design: 50/50 or 80/20 split (96/4 had a 51% chance of detecting a 10% lift); log assignment timestamps; pre-register the primary metric, the smallest lift worth acting on, and guardrails (unsubscribe / complaint rate, cost per acquisition); automatic daily group-size check. | The same users at 50/50 would have a ≈100% chance of detecting a 10% lift and could detect 0.10 pp instead of 0.26 pp; timestamps show whether the effect fades. | Chance of detection and smallest detectable lift reviewed at design time; daily group-size check. | A bigger control group means more users miss the ads during the test; logging work for Eng. |
+| R5 | Game PM (Eng + Analytics fix assignment) | Keep the first gate at level 30 (no change). Fix assignment / logging first (level 40 received ≈790 extra installs, with a net excess of 762 among players with fewer than 15 rounds). Re-test only if the gate position matters commercially. | Avoids a change with no sign of a retention benefit. The part of the Day-7 gap the gate could explain is ≈−0.3 pp per install (95% range −0.71 to +0.07; ≈32 fewer Day-7 players per 10,000 installs), and even that may not be the gate. Level 40 does let players who reach level 30 play a little more (median 75 vs. 72 rounds). | Any re-test: pre-register a 0.5 pp Day-7 change per install as the smallest change worth acting on (agree with the Game PM); ≈114K installs at 50/50 with the main analysis among players who reach level 30 (≈42K of them), ≈191K if analysed over all installs; daily 50/50 group-size check. | Quoting the raw −0.82 pp would overstate the effect; missing a small real effect either way. |
+| R6 | Onboarding PM (with CRM) | Focus retention work on first session → Day 1: a randomized Day-1 re-engagement test for new players who play little on their first day, Day 7 primary. | Targets the biggest drop: 55.5% of installs don't return on Day 1; 47% play fewer than 15 rounds and only 2.3% of them play on Day 7. Ceiling, not a forecast: each 1 pp of installs moved from "no Day-1 return" to "returned" is worth at most ≈0.26 pp of Day 7 (32.8% vs. 7.2%), if they then behaved like today's Day-1 returners. | Day 7 among targeted players (primary), Day 1 (secondary). Sizing: +0.5 pp Day 7 on the 2.3% base (placeholder target) needs ≈31K target players (≈66K installs) at 50/50. | Rounds here are counted over 14 days and overlap Day 7, so the real targeting rule must use first-day play; the play–retention link may not be causal; notification fatigue. |
 
 **Detail behind this memo:**
 - dashboard: `streamlit run dashboard/app.py`
 - full report: `reports/report.html`
 - metric definitions: [`02_metric_definitions.md`](02_metric_definitions.md)
+- data-quality checks: [`03_data_quality_checks.md`](03_data_quality_checks.md)
 - assumptions: [`assumptions.md`](assumptions.md)
 
-*Revised 2026-11-03: the gate-test section now separates what the gate could have caused from the assignment problem, and the earlier reading of a 0.82 pp drop caused by level 40 is withdrawn. The ad section adds the share of conversions the ads caused, the holdout cost and the chance this test had of detecting a 10% lift.*
+*Revision note (v2/v3): v2 separated the part the gate could explain from the assignment problem, withdrew the reading of the raw 0.82 pp gap as the gate's effect, and added the share of conversions the ads caused, the holdout cost and the chance this test had of detecting a 10% lift. v3 calls the gate's −0.32 pp "the part the gate could explain" rather than an estimate, sizes any gate re-test at a 0.5 pp change fixed in advance instead of the observed gap, reads the Day-1 and play guardrails among players who could meet the gate, adds the 2.3% Day-7 rate of players who barely start and the size of the R6 test, turns R2 and R3 into tests that can actually be run, and puts the sections in the same order as the questions above.*
