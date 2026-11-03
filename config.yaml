@@ -1,0 +1,16 @@
+# Project configuration. Data paths can be overridden with environment
+# variables (or a .env file at the repo root, see .env.example):
+#   MARKETING_AB_CSV, COOKIE_CATS_CSV
+data:
+  marketing_ab_csv: ~/projects/data-projects/datasets/p1-marketing-ab-2021/marketing_AB.csv
+  cookie_cats_csv: ~/projects/data-projects/datasets/p1-cookie-cats/cookie_cats.csv
+
+analysis:
+  seed: 20211103            # fixed seed for every bootstrap
+  alpha: 0.05
+  power: 0.80
+  n_bootstrap: 10000
+  intended_ad_share: 0.96   # intended allocation of the ad experiment (see docs/assumptions.md)
+  intended_gate40_share: 0.50
+  gamerounds_outlier_max: 10000   # players above this are dropped (1 player, 49,854 rounds)
+  value_per_conversion_usd: 50    # ILLUSTRATIVE default; no revenue in the data

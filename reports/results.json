@@ -1,0 +1,635 @@
+{
+  "config": {
+    "seed": 20211103,
+    "alpha": 0.05,
+    "power": 0.8,
+    "n_bootstrap": 10000,
+    "intended_ad_share": 0.96,
+    "value_per_conversion_usd": 50.0
+  },
+  "data_quality": {
+    "marketing": {
+      "rows_raw": 588101,
+      "rows_clean": 588101,
+      "unique_user_id": 588101,
+      "duplicate_user_id": 0,
+      "nulls": {
+        "Unnamed: 0": 0,
+        "user id": 0,
+        "test group": 0,
+        "converted": 0,
+        "total ads": 0,
+        "most ads day": 0,
+        "most ads hour": 0
+      },
+      "test_group_values": [
+        "ad",
+        "psa"
+      ],
+      "converted_values": [
+        "False",
+        "True"
+      ],
+      "total_ads_min": 1,
+      "total_ads_max": 2065,
+      "total_ads_p50": 13.0,
+      "total_ads_p99": 202.0,
+      "total_ads_p999": 499.9,
+      "users_over_1000_ads": 36,
+      "most_ads_hour_range": [
+        0,
+        23
+      ],
+      "most_ads_day_values": 7,
+      "index_column_dropped": [
+        "Unnamed: 0"
+      ]
+    },
+    "cookie": {
+      "rows_raw": 90189,
+      "rows_clean": 90188,
+      "unique_user_id": 90189,
+      "duplicate_user_id": 0,
+      "nulls": {
+        "userid": 0,
+        "version": 0,
+        "sum_gamerounds": 0,
+        "retention_1": 0,
+        "retention_7": 0
+      },
+      "version_values": [
+        "gate_30",
+        "gate_40"
+      ],
+      "rounds_min": 0,
+      "rounds_max_raw": 49854,
+      "rounds_p50": 16.0,
+      "rounds_p99": 493.0,
+      "rounds_p999": 1073.624,
+      "rounds_max_clean": 2961,
+      "zero_round_players": 3994,
+      "outliers_dropped": [
+        {
+          "user_id": 6390605,
+          "version": "gate_30",
+          "sum_gamerounds": 49854,
+          "retention_1": false,
+          "retention_7": true
+        }
+      ],
+      "d7_without_d1": 3599,
+      "retention_raw": {
+        "d1": 0.44521,
+        "d7": 0.186065
+      },
+      "retention_clean": {
+        "d1": 0.445214,
+        "d7": 0.186056
+      },
+      "mean_rounds_raw": 51.872457,
+      "mean_rounds_clean": 51.320253
+    }
+  },
+  "ad": {
+    "groups": {
+      "ad": {
+        "users": 564577,
+        "conversions": 14423,
+        "impressions": 14014701,
+        "mean_ads": 24.823365,
+        "median_ads": 13.0
+      },
+      "psa": {
+        "users": 23524,
+        "conversions": 420,
+        "impressions": 582481,
+        "mean_ads": 24.761138,
+        "median_ads": 12.0
+      }
+    },
+    "test": {
+      "n_t": 564577,
+      "n_c": 23524,
+      "conv_t": 14423,
+      "conv_c": 420,
+      "rate_t": 0.025547,
+      "rate_c": 0.017854,
+      "abs_lift": 0.007692,
+      "abs_ci_low": 0.005873,
+      "abs_ci_high": 0.00936,
+      "rel_lift": 0.430851,
+      "rel_ci_low": 0.299697,
+      "rel_ci_high": 0.57524,
+      "z": 7.370078,
+      "p_value": 0.0,
+      "alpha": 0.05
+    },
+    "wald_ci": [
+      0.005951,
+      0.009434
+    ],
+    "chi2_test": {
+      "chi2": 54.318052,
+      "p_value": 0.0
+    },
+    "bootstrap": {
+      "n_boot": 10000,
+      "seed": 20211103,
+      "abs_ci": [
+        0.005946,
+        0.009457
+      ],
+      "rel_ci": [
+        0.304684,
+        0.58431
+      ],
+      "share_draws_le_0": 0.0
+    },
+    "srm": {
+      "n_t": 564577,
+      "n_c": 23524,
+      "observed_share_t": 0.96,
+      "intended_share_t": 0.96,
+      "expected_t": 564576.96,
+      "expected_c": 23524.04,
+      "chi2": 0.0,
+      "p_value": 0.999788,
+      "threshold": 0.001,
+      "flag": false
+    },
+    "balance": [
+      {
+        "variable": "most_ads_day",
+        "chi2": 235.614452,
+        "df": 6,
+        "p_value": 0.0,
+        "cramers_v": 0.020016
+      },
+      {
+        "variable": "most_ads_hour",
+        "chi2": 192.291732,
+        "df": 23,
+        "p_value": 0.0,
+        "cramers_v": 0.018082
+      },
+      {
+        "variable": "exposure_bucket",
+        "chi2": 284.211956,
+        "df": 7,
+        "p_value": 0.0,
+        "cramers_v": 0.021983
+      }
+    ],
+    "total_ads_mannwhitney_p": 0.0,
+    "total_ads_ks": {
+      "stat": 0.039696,
+      "p_value": 0.0
+    },
+    "power": {
+      "mde_current": {
+        "p_c": 0.017854,
+        "n_t": 564577,
+        "n_c": 23524,
+        "alpha": 0.05,
+        "power": 0.8,
+        "cohens_h": 0.018643,
+        "mde_abs": 0.002552,
+        "mde_rel": 0.142956
+      },
+      "mde_if_5050_same_total": {
+        "p_c": 0.017854,
+        "n_t": 294050,
+        "n_c": 294050,
+        "alpha": 0.05,
+        "power": 0.8,
+        "cohens_h": 0.007308,
+        "mde_abs": 0.000981,
+        "mde_rel": 0.054922
+      },
+      "achieved_power_at_observed": 1.0,
+      "total_n_for_current_mde_at_9604": 588101,
+      "total_n_for_current_mde_at_5050": 90333,
+      "total_n_for_10pct_rel_lift": {
+        "0.5": 181074,
+        "0.8": 282928,
+        "0.96": 1178866
+      }
+    },
+    "business": {
+      "value_per_conversion_usd": 50.0,
+      "impressions_ad_group": 14014701,
+      "incremental_conversions": {
+        "point": 4342.982146,
+        "ci_low": 3315.999172,
+        "ci_high": 5284.456986
+      },
+      "impressions_per_incremental_conversion": 3226.976425,
+      "incremental_value_usd": {
+        "point": 217149.107295,
+        "ci_low": 165799.958591,
+        "ci_high": 264222.849314
+      },
+      "breakeven_cpm_usd": {
+        "point": 15.49438,
+        "ci_low": 11.830431,
+        "ci_high": 18.853263
+      },
+      "share_of_ad_conversions_incremental": 0.301115
+    },
+    "heterogeneity": {
+      "most_ads_day": {
+        "lrt": {
+          "dimension": "most_ads_day",
+          "lr_stat": 16.219546,
+          "df": 6,
+          "p_value": 0.012623
+        },
+        "stratified": {
+          "dimension": "most_ads_day",
+          "pooled_or": 1.43924,
+          "or_ci_low": 1.304964,
+          "or_ci_high": 1.587332,
+          "cmh_p_value": 0.0,
+          "breslow_day_p_value": 0.013296,
+          "mh_risk_diff": 0.007639
+        },
+        "n_segments": 7,
+        "n_sig_unadjusted": 5,
+        "n_sig_bonferroni": 3,
+        "n_sig_holm": 5,
+        "n_sig_bh": 5,
+        "max_lift_segment": "Tuesday",
+        "max_lift_pp": 1.59925,
+        "min_lift_segment": "Thursday",
+        "min_lift_pp": 0.140666
+      },
+      "most_ads_hour": {
+        "lrt": {
+          "dimension": "most_ads_hour",
+          "lr_stat": 29.099566,
+          "df": 23,
+          "p_value": 0.177031
+        },
+        "stratified": {
+          "dimension": "most_ads_hour",
+          "pooled_or": 1.445582,
+          "or_ci_low": 1.310677,
+          "or_ci_high": 1.594372,
+          "cmh_p_value": 0.0,
+          "breslow_day_p_value": 0.519166,
+          "mh_risk_diff": 0.007741
+        },
+        "n_segments": 24,
+        "n_sig_unadjusted": 8,
+        "n_sig_bonferroni": 1,
+        "n_sig_holm": 1,
+        "n_sig_bh": 1,
+        "max_lift_segment": "6",
+        "max_lift_pp": 2.31738,
+        "min_lift_segment": "3",
+        "min_lift_pp": -0.081124
+      },
+      "exposure_bucket": {
+        "lrt": {
+          "dimension": "exposure_bucket",
+          "lr_stat": 43.71288,
+          "df": 7,
+          "p_value": 0.0
+        },
+        "stratified": {
+          "dimension": "exposure_bucket",
+          "pooled_or": 1.495818,
+          "or_ci_low": 1.353317,
+          "or_ci_high": 1.653324,
+          "cmh_p_value": 0.0,
+          "breslow_day_p_value": 0.0,
+          "mh_risk_diff": 0.008072
+        },
+        "n_segments": 8,
+        "n_sig_unadjusted": 3,
+        "n_sig_bonferroni": 3,
+        "n_sig_holm": 3,
+        "n_sig_bh": 3,
+        "max_lift_segment": "101-200",
+        "max_lift_pp": 7.038964,
+        "min_lift_segment": "6-10",
+        "min_lift_pp": -0.188191
+      }
+    }
+  },
+  "cookie": {
+    "overall": {
+      "players": 90188.0,
+      "share_of_players": 1.0,
+      "retention_1": 0.445214,
+      "retention_1_ci_low": 0.441973,
+      "retention_1_ci_high": 0.44846,
+      "retention_7": 0.186056,
+      "retention_7_ci_low": 0.183529,
+      "retention_7_ci_high": 0.188609
+    },
+    "funnel": [
+      {
+        "step": "Installed",
+        "players": 90188,
+        "share_of_installs": 1.0,
+        "step_conversion": null
+      },
+      {
+        "step": "Played at least 1 round",
+        "players": 86194,
+        "share_of_installs": 0.955715,
+        "step_conversion": 0.955715
+      },
+      {
+        "step": "Returned on Day 1",
+        "players": 40153,
+        "share_of_installs": 0.445214,
+        "step_conversion": 0.465844
+      },
+      {
+        "step": "Returned on Day 1 and Day 7",
+        "players": 13182,
+        "share_of_installs": 0.146161,
+        "step_conversion": 0.328294
+      }
+    ],
+    "by_rounds_bucket": [
+      {
+        "rounds_bucket": "0",
+        "players": 3994,
+        "share_of_players": 0.044285,
+        "retention_1": 0.021783,
+        "retention_1_ci_low": 0.017694,
+        "retention_1_ci_high": 0.02679,
+        "retention_7": 0.007261,
+        "retention_7_ci_low": 0.00506,
+        "retention_7_ci_high": 0.010408
+      },
+      {
+        "rounds_bucket": "1-4",
+        "players": 17731,
+        "share_of_players": 0.1966,
+        "retention_1": 0.065027,
+        "retention_1_ci_low": 0.061491,
+        "retention_1_ci_high": 0.068752,
+        "retention_7": 0.012972,
+        "retention_7_ci_low": 0.011408,
+        "retention_7_ci_high": 0.014746
+      },
+      {
+        "rounds_bucket": "5-14",
+        "players": 20601,
+        "share_of_players": 0.228423,
+        "retention_1": 0.240183,
+        "retention_1_ci_low": 0.234398,
+        "retention_1_ci_high": 0.246064,
+        "retention_7": 0.034125,
+        "retention_7_ci_low": 0.031731,
+        "retention_7_ci_high": 0.036692
+      },
+      {
+        "rounds_bucket": "15-29",
+        "players": 14594,
+        "share_of_players": 0.161818,
+        "retention_1": 0.500411,
+        "retention_1_ci_low": 0.4923,
+        "retention_1_ci_high": 0.508522,
+        "retention_7": 0.093669,
+        "retention_7_ci_low": 0.089048,
+        "retention_7_ci_high": 0.098503
+      },
+      {
+        "rounds_bucket": "30-39",
+        "players": 5876,
+        "share_of_players": 0.065153,
+        "retention_1": 0.650102,
+        "retention_1_ci_low": 0.637813,
+        "retention_1_ci_high": 0.662195,
+        "retention_7": 0.15708,
+        "retention_7_ci_low": 0.148,
+        "retention_7_ci_high": 0.166607
+      },
+      {
+        "rounds_bucket": "40-99",
+        "players": 14877,
+        "share_of_players": 0.164955,
+        "retention_1": 0.778114,
+        "retention_1_ci_low": 0.771366,
+        "retention_1_ci_high": 0.784719,
+        "retention_7": 0.311353,
+        "retention_7_ci_low": 0.303962,
+        "retention_7_ci_high": 0.318842
+      },
+      {
+        "rounds_bucket": "100+",
+        "players": 12515,
+        "share_of_players": 0.138766,
+        "retention_1": 0.9002,
+        "retention_1_ci_low": 0.894825,
+        "retention_1_ci_high": 0.905329,
+        "retention_7": 0.710827,
+        "retention_7_ci_low": 0.70282,
+        "retention_7_ci_high": 0.718705
+      }
+    ],
+    "by_d1_status": [
+      {
+        "d1_status": "Did not return Day 1",
+        "players": 50035,
+        "share_of_players": 0.554786,
+        "retention_1": 0.0,
+        "retention_1_ci_low": 0.0,
+        "retention_1_ci_high": 7.7e-05,
+        "retention_7": 0.07191,
+        "retention_7_ci_low": 0.069679,
+        "retention_7_ci_high": 0.074206
+      },
+      {
+        "d1_status": "Returned Day 1",
+        "players": 40153,
+        "share_of_players": 0.445214,
+        "retention_1": 1.0,
+        "retention_1_ci_low": 0.999904,
+        "retention_1_ci_high": 1.0,
+        "retention_7": 0.328294,
+        "retention_7_ci_low": 0.323718,
+        "retention_7_ci_high": 0.332904
+      }
+    ],
+    "by_version": [
+      {
+        "version": "gate_30",
+        "players": 44699,
+        "share_of_players": 0.49562,
+        "retention_1": 0.448198,
+        "retention_1_ci_low": 0.443592,
+        "retention_1_ci_high": 0.452812,
+        "retention_7": 0.190183,
+        "retention_7_ci_low": 0.186572,
+        "retention_7_ci_high": 0.193848
+      },
+      {
+        "version": "gate_40",
+        "players": 45489,
+        "share_of_players": 0.50438,
+        "retention_1": 0.442283,
+        "retention_1_ci_low": 0.437724,
+        "retention_1_ci_high": 0.446851,
+        "retention_7": 0.182,
+        "retention_7_ci_low": 0.178481,
+        "retention_7_ci_high": 0.185573
+      }
+    ],
+    "gap_by_dimension": [
+      {
+        "dimension": "Engagement depth (rounds played)",
+        "column": "rounds_bucket",
+        "metric": "retention_7",
+        "best_segment": "100+",
+        "best_rate": 0.710827,
+        "worst_segment": "0",
+        "worst_rate": 0.007261,
+        "gap_pp": 70.356612,
+        "n_segments": 7
+      },
+      {
+        "dimension": "Came back on Day 1",
+        "column": "d1_status",
+        "metric": "retention_7",
+        "best_segment": "Returned Day 1",
+        "best_rate": 0.328294,
+        "worst_segment": "Did not return Day 1",
+        "worst_rate": 0.07191,
+        "gap_pp": 25.638461,
+        "n_segments": 2
+      },
+      {
+        "dimension": "Experiment version",
+        "column": "version",
+        "metric": "retention_7",
+        "best_segment": "gate_30",
+        "best_rate": 0.190183,
+        "worst_segment": "gate_40",
+        "worst_rate": 0.182,
+        "gap_pp": 0.818318,
+        "n_segments": 2
+      }
+    ],
+    "gate": {
+      "players": {
+        "gate_40": 45489,
+        "gate_30": 44699
+      },
+      "srm": {
+        "n_t": 45489,
+        "n_c": 44699,
+        "observed_share_t": 0.50438,
+        "intended_share_t": 0.5,
+        "expected_t": 45094.0,
+        "expected_c": 45094.0,
+        "chi2": 6.919989,
+        "p_value": 0.008524,
+        "threshold": 0.001,
+        "flag": false
+      },
+      "retention_1": {
+        "n_t": 45489,
+        "n_c": 44699,
+        "conv_t": 20119,
+        "conv_c": 20034,
+        "rate_t": 0.442283,
+        "rate_c": 0.448198,
+        "abs_lift": -0.005915,
+        "abs_ci_low": -0.012402,
+        "abs_ci_high": 0.000572,
+        "rel_lift": -0.013198,
+        "rel_ci_low": -0.027472,
+        "rel_ci_high": 0.001286,
+        "z": -1.787104,
+        "p_value": 0.073921,
+        "alpha": 0.05,
+        "boot_abs_ci": [
+          -0.012407,
+          0.000599
+        ],
+        "boot_share_ge_0": 0.036,
+        "mde": {
+          "p_c": 0.448198,
+          "n_t": 45489,
+          "n_c": 44699,
+          "alpha": 0.05,
+          "power": 0.8,
+          "cohens_h": 0.018658,
+          "mde_abs": 0.009287,
+          "mde_rel": 0.020722
+        }
+      },
+      "retention_7": {
+        "n_t": 45489,
+        "n_c": 44699,
+        "conv_t": 8279,
+        "conv_c": 8501,
+        "rate_t": 0.182,
+        "rate_c": 0.190183,
+        "abs_lift": -0.008183,
+        "abs_ci_low": -0.013264,
+        "abs_ci_high": -0.003103,
+        "rel_lift": -0.043028,
+        "rel_ci_low": -0.068803,
+        "rel_ci_high": -0.016539,
+        "z": -3.15741,
+        "p_value": 0.001592,
+        "alpha": 0.05,
+        "boot_abs_ci": [
+          -0.013194,
+          -0.003103
+        ],
+        "boot_share_ge_0": 0.0011,
+        "mde": {
+          "p_c": 0.190183,
+          "n_t": 45489,
+          "n_c": 44699,
+          "alpha": 0.05,
+          "power": 0.8,
+          "cohens_h": 0.018658,
+          "mde_abs": 0.007376,
+          "mde_rel": 0.038783
+        }
+      },
+      "rounds": {
+        "mean_t": 51.298776,
+        "mean_c": 51.342111,
+        "median_t": 16.0,
+        "median_c": 17.0,
+        "mannwhitney_p": 0.050892
+      },
+      "d7_by_reached_30": [
+        {
+          "reached_gate_30": "False",
+          "version": "gate_30",
+          "mean": 0.042576,
+          "size": 28044
+        },
+        {
+          "reached_gate_30": "False",
+          "version": "gate_40",
+          "mean": 0.039306,
+          "size": 28876
+        },
+        {
+          "reached_gate_30": "True",
+          "version": "gate_30",
+          "mean": 0.438727,
+          "size": 16655
+        },
+        {
+          "reached_gate_30": "True",
+          "version": "gate_40",
+          "mean": 0.430025,
+          "size": 16613
+        }
+      ]
+    }
+  }
+}

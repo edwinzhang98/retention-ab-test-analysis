@@ -1,0 +1,4 @@
+dimension,column,metric,best_segment,best_rate,worst_segment,worst_rate,gap_pp,n_segments
+Engagement depth (rounds played),rounds_bucket,retention_7,100+,0.7108270075908909,0,0.007260891337005508,70.35661162538854,7
+Came back on Day 1,d1_status,retention_7,Returned Day 1,0.3282942744004184,Did not return Day 1,0.07190966323573499,25.638461116468342,2
+Experiment version,version,retention_7,gate_30,0.19018322557551623,gate_40,0.18200004396667327,0.818318160884296,2
