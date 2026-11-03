@@ -62,6 +62,8 @@ def main() -> None:
                 page.goto(f"{base}/{slug}")
                 page.wait_for_selector("h1", timeout=30_000)
                 page.wait_for_selector(".js-plotly-plot", timeout=30_000)
+                # wait until the script run has finished (the "Running... / Stop" widget disappears)
+                page.wait_for_selector("[data-testid='stStatusWidget']", state="hidden", timeout=30_000)
                 page.wait_for_timeout(1500)  # let remaining charts finish drawing
                 errors = page.locator("[data-testid='stException']").count()
                 path = OUT / f"{name}.png"

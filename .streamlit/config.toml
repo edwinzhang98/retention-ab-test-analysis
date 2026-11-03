@@ -12,3 +12,6 @@ runOnSave = false
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"   # demo app: hide the Deploy button and developer menu
