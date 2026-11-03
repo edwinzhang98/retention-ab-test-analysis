@@ -10,7 +10,9 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 import pandas as pd
-import statsmodels.api as sm
+from statsmodels.genmod import families
+from statsmodels.genmod.generalized_linear_model import GLM
+from statsmodels.tools.tools import add_constant
 from scipy import stats
 from statsmodels.stats.contingency_tables import StratifiedTable
 from statsmodels.stats.multitest import multipletests
@@ -129,13 +131,13 @@ def srm_check(n_t: int, n_c: int, intended_share_t: float, threshold: float = 0.
 
     Two-level rule (see docs/assumptions.md):
       p < threshold (0.001)          -> FAIL: stop, results are not trustworthy
-      threshold <= p < warn (0.01)   -> WARN: investigate assignment before certifying results
+      threshold <= p < warn (0.01)   -> WARNING: investigate assignment before certifying results
       p >= warn                      -> PASS
     """
     n = n_t + n_c
     exp = np.array([n * intended_share_t, n * (1 - intended_share_t)])
     chi2, p = stats.chisquare([n_t, n_c], exp)
-    status = "FAIL" if p < threshold else ("WARN" if p < warn_threshold else "PASS")
+    status = "FAIL" if p < threshold else ("WARNING" if p < warn_threshold else "PASS")
     return {
         "n_t": int(n_t), "n_c": int(n_c),
         "observed_share_t": n_t / n, "intended_share_t": intended_share_t,
@@ -260,7 +262,7 @@ def interaction_lrt(cells: pd.DataFrame, by: str, group_col: str = "test_group",
     g["fail"] = g[users_col] - g[conv_col]
     endog = g[[conv_col, "fail"]].to_numpy()
     X = pd.get_dummies(g[[group_col, by]], drop_first=True).astype(float)
-    m = sm.GLM(endog, sm.add_constant(X), family=sm.families.Binomial()).fit()
+    m = GLM(endog, add_constant(X), family=families.Binomial()).fit()
     lr, df = float(m.deviance), int(round(m.df_resid))
     sparse = int((g[conv_col] == 0).sum())
     return {"dimension": by, "lr_stat": lr, "df": df, "p_value": float(stats.chi2.sf(lr, df)),

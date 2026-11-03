@@ -96,7 +96,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
 
     curve = R.engagement_curve(players, 200, by="version")
     share30 = (players["sum_gamerounds"] >= 30).mean()
-    tk = (f"Half of players stop before {int(players['sum_gamerounds'].median())} rounds; only {pct(share30, 0)} played "
+    tk = (f"Half of players play {int(players['sum_gamerounds'].median())} rounds or fewer; only {pct(share30, 0)} played "
           f"≥ 30 rounds, so at most ~{pct(share30, 0)} of installs could have met the level-30 gate.")
     out["ret_engagement_curve"] = Fig("ret_engagement_curve", "retention", F.fig_engagement_curve(
         curve, "Share of players reaching at least N rounds (%)", tk), tk)
@@ -221,6 +221,9 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
           f"users; this is not a frequency curve.")
     out["het_exposure"] = Fig("het_exposure", "heterogeneity", F.fig_dose_response(
         expo, "Conversion rate by total ads seen, ad vs PSA (%)", tk), tk)
+    tk = (f"Seen as lifts: buckets up to 35 ads sit near 0 and 36–200 well above the overall {pp(t['abs_lift'])}; "
+          f"{het['exposure_bucket']['differs_from_rest']['holm']} of 8 buckets differ from the rest after Holm. "
+          f"Exploratory: exposure is recorded after assignment.")
     out["het_exposure_forest"] = Fig("het_exposure_forest", "heterogeneity", F.fig_lift_forest(
         expo, "exposure_bucket", "Ad lift by total ads seen (pp, 95% CI; filled = differs from other buckets, Holm)", tk,
         overall_lift=t["abs_lift"], seg_title="Total ads seen (bucket)"), tk)
@@ -228,10 +231,10 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     # ------------------------------------------------------------ gate experiment
     g = ck["gate"]
     g7, g1 = g["retention_7"], g["retention_1"]
-    tk = (f"gate_40 shows lower D7 retention ({pct(g7['rate_t'], 2)} vs {pct(g7['rate_c'], 2)}: "
-          f"{g7['abs_lift']*100:+.2f} pp, 95% CI {g7['abs_ci_low']*100:.2f} to {g7['abs_ci_high']*100:.2f}). "
-          f"D1 (guardrail) is {g1['abs_lift']*100:+.2f} pp (CI {g1['abs_ci_low']*100:.2f} to {g1['abs_ci_high']*100:+.2f}), "
-          f"so a D1 drop of up to {abs(g1['abs_ci_low'])*100:.1f} pp can't be ruled out. SRM warning: not certified.")
+    tk = (f"Naive comparison: gate_40 D7 {pct(g7['rate_t'], 2)} vs {pct(g7['rate_c'], 2)} "
+          f"({g7['abs_lift']*100:+.2f} pp, 95% CI {g7['abs_ci_low']*100:.2f} to {g7['abs_ci_high']*100:.2f}); "
+          f"D1 (guardrail) {g1['abs_lift']*100:+.2f} pp (CI {g1['abs_ci_low']*100:.2f} to {g1['abs_ci_high']*100:+.2f}). "
+          f"Not certified: the arms are unbalanced (SRM warning), see the integrity checks.")
     out["gate_rates"] = Fig("gate_rates", "gate", F.fig_gate_rates(
         g, "D1 and D7 retention by gate version (%, 95% CI)", tk), tk)
     tk = (f"The bootstrap agrees with the analytic intervals: D7 {g7['abs_lift']*100:+.2f} pp (95% CI "
@@ -256,6 +259,34 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
           f"{wc['d7_diff_if_excess_removed']*100:+.2f} pp.")
     out["gate_negative_control"] = Fig("gate_negative_control", "gate", F.fig_effect_by_stratum(
         rows, "D7 retention difference by stratum: a negative-control check (pp, 95% CI)", tk), tk)
+
+    curve_v = R.engagement_curve(players, 60, by="version")
+    pg = g["pre_gate_engagement"]
+    sbs = g["srm_by_stratum"]
+    tk = (f"Before round 30 the two versions are identical, yet gate_40's curve already sits below gate_30's "
+          f"(pre-gate rounds: {fmt_p(pg['mannwhitney_p'])}). gate_40 got {g['excess_players_with_lt_15_rounds']} of its "
+          f"{wc['excess_players_gate_40']} extra players among people with < 15 rounds (split {fmt_p(sbs['rounds_lt_15']['p_value'])}); "
+          f"players with 30+ rounds are balanced ({fmt_p(sbs['rounds_ge_30']['p_value'])}).")
+    out["gate_engagement_gap"] = Fig("gate_engagement_gap", "gate", F.fig_engagement_gap(
+        curve_v, g["players"]["gate_40"], g["players"]["gate_30"],
+        "Engagement curve gap, gate_40 − gate_30 (pp of players, pointwise 95% CI)", tk), tk)
+
+    dec = g["d7_decomposition"]
+    parts = pd.DataFrame([
+        {"label": "Naive gap (all players)", "value": dec["naive_diff"], "role": "total"},
+        {"label": "Player mix (extra low-engagement players)", "value": dec["composition"], "role": "artifact"},
+        {"label": "Players who never met a gate", "value": dec["within_never_reached_30"], "role": "artifact"},
+        {"label": "Players who could meet the gate", "value": dec["within_reached_30"], "role": "effect",
+         "ci_low": dec["install_level_effect_ci_if_only_reachers"][0],
+         "ci_high": dec["install_level_effect_ci_if_only_reachers"][1]},
+    ])
+    ci = dec["install_level_effect_ci_if_only_reachers"]
+    tk = (f"Of the naive {dec['naive_diff']*100:+.2f} pp, {dec['composition']*100:+.2f} pp comes from the player mix and "
+          f"{dec['within_never_reached_30']*100:+.2f} pp from players who never met a gate; neither can be the gate. "
+          f"The part the gate could cause is {dec['within_reached_30']*100:+.2f} pp per install (95% CI "
+          f"{ci[0]*100:.2f} to {ci[1]*100:+.2f}): probably small, possibly zero, with no sign of a benefit.")
+    out["gate_decomposition"] = Fig("gate_decomposition", "gate", F.fig_gap_decomposition(
+        parts, "Where the naive D7 gap comes from (pp of installs)", tk), tk)
 
     return out
 

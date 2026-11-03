@@ -1,7 +1,7 @@
 # One-command build. `make all` = setup check + full pipeline.
 PY ?= .venv/bin/python
 
-.PHONY: all setup pipeline analysis app clean
+.PHONY: all setup pipeline analysis sql app test clean
 
 all: pipeline
 
@@ -14,6 +14,13 @@ pipeline:         ## analysis -> SQL reconciliation -> figures -> notebooks -> r
 
 analysis:         ## fast path: just recompute numbers + caches (no notebooks / report)
 	$(PY) run.py --only analysis
+
+sql:              ## run sql/*.sql in DuckDB and reconcile with reports/results.json
+	$(PY) -m src.sql_check
+
+test:             ## dashboard smoke + interaction tests (Streamlit AppTest)
+	$(PY) tests/test_dashboard_a.py
+	$(PY) tests/test_dashboard_b.py
 
 app:              ## launch the Streamlit demo
 	$(PY) -m streamlit run dashboard/app.py

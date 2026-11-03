@@ -82,6 +82,9 @@ def _layout(fig: go.Figure, title: str, subtitle: str | None = None, height: int
     return fig
 
 
+apply_layout = _layout  # public name for one-off charts (notebooks) in the house style
+
+
 def _pct(x):
     return np.asarray(x, dtype=float) * 100
 
@@ -98,12 +101,12 @@ def fig_arm_rates(arms: pd.DataFrame, title: str, subtitle: str | None = None,
             marker=dict(color=ARM_COLORS.get(r.arm, BLUE), cornerradius=4),
             error_y=dict(type="data", symmetric=False, array=[(r.ci_high - r.rate) * 100],
                          arrayminus=[(r.rate - r.ci_low) * 100], color=INK_2, thickness=1.5, width=8),
-            text=[f"{r.rate*100:.2f}%"], textposition="outside", textfont=dict(color=INK),
-            cliponaxis=False,
             customdata=[[int(r.n), int(r.conversions), r.ci_low * 100, r.ci_high * 100]],
             hovertemplate="%{x}<br>Rate %{y:.3f}%<br>95% CI %{customdata[2]:.3f}% to %{customdata[3]:.3f}%"
                           "<br>Users %{customdata[0]:,}<br>Conversions %{customdata[1]:,}<extra></extra>",
         )
+        fig.add_annotation(x=ARM_NAMES.get(r.arm, r.arm), y=r.ci_high * 100, text=f"{r.rate*100:.2f}%",
+                           showarrow=False, yanchor="bottom", yshift=3, font=dict(color=INK))
     _layout(fig, title, subtitle, height=height, yaxis_title=ytitle, legend=False)
     fig.update_yaxes(rangemode="tozero")
     return fig
@@ -119,15 +122,17 @@ def arm_table(conv_t, n_t, conv_c, n_c, t="ad", c="psa", alpha=0.05) -> pd.DataF
 
 def fig_bootstrap(draws: np.ndarray, ci: tuple[float, float], point: float, title: str,
                   subtitle: str | None = None, xtitle: str = "Difference in conversion rate, treatment − control (pp)",
-                  height: int = 380) -> go.Figure:
-    """Histogram of bootstrap differences (inputs in proportions; shown in pp)."""
+                  height: int = 380, alpha: float = 0.05) -> go.Figure:
+    """Histogram of bootstrap differences (inputs in proportions; shown in pp).
+    `alpha` only labels the interval lines (ci is the matching percentile interval)."""
     d = _pct(draws)
     fig = go.Figure()
     fig.add_histogram(x=d, nbinsx=80, marker=dict(color=BLUE_LIGHT, line=dict(color=SURFACE, width=1)),
                       name="Bootstrap draws", hovertemplate="%{x:.3f} pp<br>%{y} draws<extra></extra>")
     lo, hi = ci[0] * 100, ci[1] * 100
     fig.add_vrect(x0=lo, x1=hi, fillcolor=BLUE, opacity=0.08, line_width=0)
-    for x, lab in ((lo, f"2.5%: {lo:.2f}"), (hi, f"97.5%: {hi:.2f}")):
+    lo_q, hi_q = f"{alpha / 2 * 100:g}%", f"{(1 - alpha / 2) * 100:g}%"
+    for x, lab in ((lo, f"{lo_q}: {lo:.2f}"), (hi, f"{hi_q}: {hi:.2f}")):
         fig.add_vline(x=x, line=dict(color=BLUE, width=1.5))
         fig.add_annotation(x=x, y=1, yref="paper", text=lab, showarrow=False, yanchor="bottom",
                            font=dict(size=11, color=INK_2))
@@ -140,13 +145,15 @@ def fig_bootstrap(draws: np.ndarray, ci: tuple[float, float], point: float, titl
                            xshift=4, font=dict(size=11, color=INK_2))
     _layout(fig, title, subtitle, height=height, xaxis_title=xtitle, yaxis_title="Bootstrap draws (count)",
             legend=False)
+    fig.update_layout(bargap=0.04)  # _layout's bargap is for bar charts; histograms need near-touching bins
     return fig
 
 
 def fig_lift_forest(tab: pd.DataFrame, seg_col: str, title: str, subtitle: str | None = None,
                     overall_lift: float | None = None, sig_col: str = "differs_adj",
                     seg_title: str = "", height: int | None = None, ci_cols=("abs_ci_low", "abs_ci_high"),
-                    sig_label: str | None = None, nonsig_label: str | None = None) -> go.Figure:
+                    sig_label: str | None = None, nonsig_label: str | None = None,
+                    xtitle: str = "Lift in conversion rate, treatment − control (pp)") -> go.Figure:
     """Dot + 95% CI per segment for the absolute lift (pp).
     Filled vs hollow markers encode `sig_col`:
       differs_adj      -> segment's lift differs from the other segments' (heterogeneity question; default)
@@ -193,9 +200,8 @@ def fig_lift_forest(tab: pd.DataFrame, seg_col: str, title: str, subtitle: str |
                            showarrow=False, yanchor="bottom", xanchor="left", xshift=4,
                            font=dict(size=11, color=BLUE))
     h = height or max(320, 26 * len(t) + 150)
-    _layout(fig, title, subtitle, height=h, xaxis_title="Lift in conversion rate, treatment − control (pp)",
-            yaxis_title=seg_title)
-    fig.update_yaxes(categoryorder="array", categoryarray=y[::-1], showgrid=False, type="category")
+    _layout(fig, title, subtitle, height=h, xaxis_title=xtitle, yaxis_title=seg_title)
+    fig.update_yaxes(categoryorder="array", categoryarray=y[::-1], showgrid=False, type="category", automargin=True)
     fig.update_xaxes(showgrid=True, gridcolor=GRID)
     return fig
 
@@ -310,11 +316,11 @@ def fig_breakeven(incr_point: float, incr_low: float, incr_high: float, impressi
                     hovertemplate="Value/conversion &#36;%{x:.0f}<br>Breakeven CPM &#36;%{y:.2f}<extra></extra>")
     be = incr_point * value_selected / impressions * 1000
     fig.add_scatter(x=[value_selected], y=[be], mode="markers+text", marker=dict(color=BLUE, size=11,
-                    line=dict(color=SURFACE, width=2)), text=[esc(f"${value_selected:.0f} → ${be:.2f} CPM")],
+                    line=dict(color=SURFACE, width=2)), text=[f"USD {value_selected:.0f} → USD {be:.2f} CPM"],
                     textposition="top left", textfont=dict(color=INK), hoverinfo="skip", name="Selected")
     if cpm_actual is not None:
         fig.add_hline(y=cpm_actual, line=dict(color=ORANGE, width=1.5))
-        fig.add_annotation(x=value_max, y=cpm_actual, text=esc(f"your CPM ${cpm_actual:.2f}"), showarrow=False,
+        fig.add_annotation(x=value_max, y=cpm_actual, text=f"your CPM: USD {cpm_actual:.2f}", showarrow=False,
                            xanchor="right", yanchor="bottom", font=dict(size=11, color=ORANGE))
     _layout(fig, title, subtitle, height=height, xaxis_title="Value per conversion (USD, assumption)",
             yaxis_title="Breakeven CPM (USD per 1,000 impressions)", legend=False)
@@ -355,13 +361,45 @@ def fig_engagement_curve(curve: pd.DataFrame, title: str, subtitle: str | None =
         fig.add_scatter(x=g["rounds_at_least"], y=g["share_of_players"] * 100, mode="lines",
                         name=ARM_NAMES.get(name, name), line=dict(color=color, width=2),
                         hovertemplate=ARM_NAMES.get(name, name) + "<br>≥ %{x} rounds: %{y:.1f}% of players<extra></extra>")
-    for gte in gates:
+    for i, gte in enumerate(gates):
         fig.add_vline(x=gte, line=dict(color=INK_2, width=1, dash="dot"))
         fig.add_annotation(x=gte, y=1, yref="paper", text=f"gate {gte}", showarrow=False, yanchor="bottom",
-                           font=dict(size=11, color=INK_2))
+                           xanchor="right" if i == 0 else "left", font=dict(size=11, color=INK_2))
     _layout(fig, title, subtitle, height=height, xaxis_title="Game rounds played in first 14 days (at least)",
             yaxis_title="Share of players (%)")
     fig.update_yaxes(range=[0, 101])
+    return fig
+
+
+def fig_engagement_gap(curve: pd.DataFrame, n_t: int, n_c: int, title: str, subtitle: str | None = None,
+                       t: str = "gate_40", c: str = "gate_30", pre_gate: int = 29, gates=(30, 40),
+                       max_rounds: int = 60, height: int = 400) -> go.Figure:
+    """Gap between two arms' engagement curves (t − c, pp) with a pointwise 95% band.
+    Before the first gate the versions are identical by design, so a gap there is a
+    balance (assignment) problem, not an effect of the gate."""
+    wide = curve.pivot(index="rounds_at_least", columns="group", values="share_of_players").loc[1:max_rounds]
+    s_t, s_c = wide[t], wide[c]
+    gap = ((s_t - s_c) * 100).to_numpy()
+    half = 1.959964 * np.sqrt(s_t * (1 - s_t) / n_t + s_c * (1 - s_c) / n_c).to_numpy() * 100
+    x = wide.index.to_numpy()
+    fig = go.Figure()
+    fig.add_vrect(x0=1, x1=pre_gate, fillcolor=GREY_LIGHT, opacity=0.3, line_width=0, layer="below")
+    fig.add_annotation(x=(1 + pre_gate) / 2, y=0.98, yref="paper", text="before any gate (versions identical)",
+                       showarrow=False, yanchor="top", font=dict(size=11, color=INK_2))
+    fig.add_scatter(x=np.concatenate([x, x[::-1]]), y=np.concatenate([gap + half, (gap - half)[::-1]]),
+                    fill="toself", fillcolor="rgba(42,120,214,0.12)", line=dict(width=0), hoverinfo="skip",
+                    name="Pointwise 95% CI")
+    fig.add_scatter(x=x, y=gap, mode="lines", line=dict(color=BLUE, width=2), name=f"{t} − {c}",
+                    customdata=np.stack([s_c * 100, s_t * 100], axis=1),
+                    hovertemplate="≥ %{x} rounds: %{y:+.2f} pp<br>" + c + " %{customdata[0]:.1f}% · " + t
+                                  + " %{customdata[1]:.1f}%<extra></extra>")
+    fig.add_hline(y=0, line=dict(color=INK_2, width=1))
+    for i, gte in enumerate(gates):
+        fig.add_vline(x=gte, line=dict(color=INK_2, width=1, dash="dot"))
+        fig.add_annotation(x=gte, y=1, yref="paper", text=f"gate {gte}", showarrow=False, yanchor="bottom",
+                           xanchor="right" if i == 0 else "left", font=dict(size=11, color=INK_2))
+    _layout(fig, title, subtitle, height=height, xaxis_title="Game rounds played in first 14 days (at least)",
+            yaxis_title="gate_40 − gate_30 share of players (pp)", legend=False)
     return fig
 
 
@@ -397,10 +435,10 @@ def fig_retention_by_rounds(by_rounds: pd.DataFrame, title: str, subtitle: str |
                         marker=dict(size=6), customdata=by_rounds["players"],
                         hovertemplate="~%{x:.0f} rounds<br>" + METRIC_NAMES[m] + " %{y:.1f}%<br>"
                                       "Players in bin %{customdata:,}<extra></extra>")
-    for gte in gates:
+    for i, gte in enumerate(gates):
         fig.add_vline(x=gte, line=dict(color=INK_2, width=1, dash="dot"))
         fig.add_annotation(x=gte, y=1, yref="paper", text=f"gate {gte}", showarrow=False, yanchor="bottom",
-                           font=dict(size=11, color=INK_2))
+                           xanchor="right" if i == 0 else "left", font=dict(size=11, color=INK_2))
     _layout(fig, title, subtitle, height=height, xaxis_title="Game rounds played in first 14 days (bin median)",
             yaxis_title="Players retained (%)")
     fig.update_yaxes(range=[0, 101])
@@ -445,7 +483,7 @@ def fig_gate_bootstrap(boot: pd.DataFrame, gate: dict, title: str, subtitle: str
                        xanchor="left", xshift=4, font=dict(size=11, color=INK_2))
     _layout(fig, title, subtitle, height=height, xaxis_title="gate_40 − gate_30 retention (pp)",
             yaxis_title="Bootstrap draws (count)")
-    fig.update_layout(barmode="overlay")
+    fig.update_layout(barmode="overlay", bargap=0.04)
     return fig
 
 
@@ -474,6 +512,36 @@ def fig_effect_by_stratum(rows: pd.DataFrame, title: str, subtitle: str | None =
     fig.update_yaxes(categoryorder="array", categoryarray=rows["label"].tolist()[::-1], showgrid=False, type="category")
     fig.update_xaxes(showgrid=True, gridcolor=GRID)
     fig.update_layout(margin=dict(l=260))
+    return fig
+
+
+def fig_gap_decomposition(parts: pd.DataFrame, title: str, subtitle: str | None = None,
+                          xtitle: str = "Contribution to the gate_40 − gate_30 D7 gap (pp of installs)",
+                          height: int = 330) -> go.Figure:
+    """Horizontal bars that add up to the naive difference.
+    parts columns: label, value (proportion), role ('total' | 'artifact' | 'effect'), ci_low/ci_high (optional)."""
+    colors = {"total": INK_2, "artifact": GREY_LIGHT, "effect": BLUE}
+    fig = go.Figure()
+    for _, r in parts.iterrows():
+        err = None
+        if pd.notna(r.get("ci_low")) and pd.notna(r.get("ci_high")):
+            err = dict(type="data", symmetric=False, array=[(r["ci_high"] - r["value"]) * 100],
+                       arrayminus=[(r["value"] - r["ci_low"]) * 100], color=INK_2, thickness=1.5, width=6)
+        fig.add_bar(y=[r["label"]], x=[r["value"] * 100], orientation="h", showlegend=False,
+                    marker=dict(color=colors.get(r["role"], BLUE), cornerradius=3), error_x=err,
+                    text=None if err else [f"{r['value']*100:+.2f} pp"], textposition="outside", cliponaxis=False,
+                    textfont=dict(color=INK),
+                    hovertemplate="%{y}: %{x:+.2f} pp<extra></extra>")
+        if err:  # label left of the whisker so it never collides with the error bar
+            fig.add_annotation(y=r["label"], x=r["ci_low"] * 100, text=f"{r['value']*100:+.2f} pp", showarrow=False,
+                               xanchor="right", xshift=-6, font=dict(color=INK))
+    fig.add_vline(x=0, line=dict(color=INK_2, width=1))
+    _layout(fig, title, subtitle, height=height, xaxis_title=xtitle, legend=False)
+    fig.update_yaxes(categoryorder="array", categoryarray=parts["label"].tolist()[::-1], showgrid=False)
+    lo = min(parts["value"].min(), parts.get("ci_low", parts["value"]).min()) * 100
+    fig.update_xaxes(range=[lo * 1.35, max(0.25, parts.get("ci_high", parts["value"]).max() * 100 + 0.2)],
+                     showgrid=True, gridcolor=GRID)
+    fig.update_layout(margin=dict(l=330), bargap=0.45)
     return fig
 
 

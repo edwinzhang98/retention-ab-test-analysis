@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "reports" / "screenshots"
 PAGES = [
-    ("overview", "1_overview"),
+    ("", "1_overview"),
     ("data-sanity", "2_data_sanity"),
     ("retention", "3_retention"),
     ("experiment", "4_experiment_readout"),

@@ -14,7 +14,7 @@ st.set_page_config(page_title="Growth Experiment Readout", page_icon="📊", lay
 inject_css()
 
 pages = [
-    st.Page("views/p1_overview.py", title="1 · Overview", default=True, url_path="overview"),
+    st.Page("views/p1_overview.py", title="1 · Overview", default=True),  # served at "/"
     st.Page("views/p2_data_sanity.py", title="2 · Data & Sanity Checks", url_path="data-sanity"),
     st.Page("views/p3_retention.py", title="3 · Retention Analysis", url_path="retention"),
     st.Page("views/p4_experiment_readout.py", title="4 · Experiment Readout: Ad vs PSA", url_path="experiment"),

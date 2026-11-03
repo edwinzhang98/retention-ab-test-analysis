@@ -263,6 +263,45 @@ def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
         "zero_round_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] == 0).mean()) for v_ in (G_T, G_C)},
         "under_30_share": {v_: float((c.loc[c.version == v_, "sum_gamerounds"] < 30).mean()) for v_ in (G_T, G_C)},
     }
+    # Where do gate_40's extra players sit? SRM within strata defined by pre-gate behaviour
+    # (raw assignment counts; rounds < 30 cannot be influenced by either gate).
+    raw_r = c_raw["sum_gamerounds"]
+    gate["srm_by_stratum"] = {}
+    for name, mask in (("rounds_lt_15", raw_r < 15), ("rounds_lt_30", raw_r < 30), ("rounds_ge_30", raw_r >= 30)):
+        sub = c_raw[mask]
+        gate["srm_by_stratum"][name] = S.srm_check(int((sub.version == G_T).sum()), int((sub.version == G_C).sum()),
+                                                   C.INTENDED_GATE40_SHARE, C.SRM_FAIL_P, C.SRM_WARN_P)
+    excess_lt15 = gate["srm_by_stratum"]["rounds_lt_15"]["n_t"] - gate["srm_by_stratum"]["rounds_lt_15"]["n_c"]
+    gate["excess_players_with_lt_15_rounds"] = int(excess_lt15)
+    # Pre-gate engagement: play before round 30 is identical by design, so min(rounds, 29) should match
+    pre_t, pre_c = rt.clip(upper=29), rc.clip(upper=29)
+    gate["pre_gate_engagement"] = {"mean_capped_29_t": float(pre_t.mean()), "mean_capped_29_c": float(pre_c.mean()),
+                                   "mannwhitney_p": float(sps.mannwhitneyu(pre_t, pre_c).pvalue)}
+    # Decompose the D7 gap: within-stratum differences (weighted by the average mix) + composition
+    w = {}
+    for name, mask in (("never_reached_30", c["sum_gamerounds"] < 30), ("reached_30", c["sum_gamerounds"] >= 30)):
+        wt, wc_ = float(mask[c.version == G_T].mean()), float(mask[c.version == G_C].mean())
+        r_t = float(c.loc[mask & (c.version == G_T), "retention_7"].mean())
+        r_c = float(c.loc[mask & (c.version == G_C), "retention_7"].mean())
+        w[name] = {"w_t": wt, "w_c": wc_, "r_t": r_t, "r_c": r_c,
+                   "within": (wt + wc_) / 2 * (r_t - r_c), "composition": (wt - wc_) * (r_t + r_c) / 2}
+    reach = strata["reached_30"]["retention_7"]
+    w_reach = (w["reached_30"]["w_t"] + w["reached_30"]["w_c"]) / 2
+    n_reach = S.required_total_n(reach["rate_c"], reach["abs_lift"], 0.5, C.ALPHA, C.POWER)
+    gate["d7_decomposition"] = {
+        "naive_diff": gate["retention_7"]["abs_lift"],
+        "within_never_reached_30": w["never_reached_30"]["within"],
+        "within_reached_30": w["reached_30"]["within"],
+        "composition": w["never_reached_30"]["composition"] + w["reached_30"]["composition"],
+        "share_reached_30": w_reach,
+        # if only players who could meet the gate are affected, the install-level effect is:
+        "install_level_effect_if_only_reachers": w_reach * reach["abs_lift"],
+        "install_level_effect_ci_if_only_reachers": [w_reach * reach["abs_ci_low"], w_reach * reach["abs_ci_high"]],
+        "detail": w,
+    }
+    gate["retest_sizing"] = {"target_effect_reachers": reach["abs_lift"], "baseline_d7_reachers": reach["rate_c"],
+                             "reachers_needed_total_5050": n_reach,
+                             "installs_needed_total_5050": int(np.ceil(n_reach / w_reach))}
     # Worst case: if gate_40's extra players were all junk that never came back, how big is the D7 gap?
     excess = nt - nc
     gate["worst_case_bound"] = {"excess_players_gate_40": int(excess),

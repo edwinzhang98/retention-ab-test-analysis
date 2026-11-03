@@ -56,11 +56,11 @@ def kpi(col, label: str, value: str, note: str | None = None, help: str | None =
 
 
 def srm_status(s: dict) -> str:
-    """PASS / WARN / FAIL. Newer results.json files carry it; older ones only have p and the threshold."""
+    """PASS / WARNING / FAIL. Newer results.json files carry it; older ones only have p and the threshold."""
     if s.get("status"):
         return s["status"]
     warn = s.get("warn_threshold", 0.01)
-    return "FAIL" if s["p_value"] < s["threshold"] else ("WARN" if s["p_value"] < warn else "PASS")
+    return "FAIL" if s["p_value"] < s["threshold"] else ("WARNING" if s["p_value"] < warn else "PASS")
 
 
 @st.cache_data(show_spinner=False)
@@ -171,7 +171,7 @@ srm_line = (f"The split was meant to be {(1 - share_i) * 100:.0f}/{share_i * 100
             f"expected). Chi-square {p_eq(SRM['p_value'])}")
 raw_line = (f" (On the raw table, before dropping the one logging-error player: {raw['n_c']:,} vs {raw['n_t']:,}, "
             f"{p_eq(raw['p_value'])}.)" if dropped else "")
-if status == "WARN":
+if status in ("WARN", "WARNING"):
     caveat(f"<b>Sample ratio mismatch: WARNING.</b> {srm_line}: below the {warn_thr:g} warning level but above the "
            f"{SRM['threshold']:g} hard-fail threshold used in this project. We treat it as a <b>warning that blocks "
            "certification</b>: the readout below shows the direction of the effect, but its size cannot be signed "
