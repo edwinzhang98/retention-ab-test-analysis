@@ -99,9 +99,9 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     funnel = pd.DataFrame(ck["funnel"])
     d1, d7 = ck["overall"]["retention_1"], ck["overall"]["retention_7"]
     f_ = funnel.set_index("step")["share_of_installs"]
-    tk = (f"{pct(1 - d1)} of new players don't come back on Day 1; {pct(d7)} play on Day 7 "
-          f"({pct(f_.iloc[3])} on both Day 1 and Day 7). The largest absolute loss "
-          f"({(f_.iloc[1] - f_.iloc[2])*100:.0f} pp of installs) is between the first session and Day 1.")
+    tk = (f"{pct(1 - d1)} of installs don't return on Day 1: the biggest drop. A further "
+          f"{(f_.iloc[1] - f_.iloc[2])*100:.1f} pp of installs return on Day 1 but not on Day 7 "
+          f"({pct(f_.iloc[2])} return on both).")
     out["ret_funnel"] = Fig("ret_funnel", "retention", F.fig_funnel(
         funnel, "New-player retention funnel (% of installs)", tk), tk)
 
@@ -141,7 +141,8 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     could_be_gate = abs(ck["gate"]["d7_decomposition"]["within_reached_30"]) * 100
     tk = (f"Engagement depth separates D7 most ({top['gap_pp']:.0f} pp across {int(top['n_segments'])} buckets, partly by "
           f"construction). The two gate versions differ by {ver['gap_pp']:.1f} pp raw, of which only about "
-          f"{could_be_gate:.1f} pp could be the gate (not certified): a minor lever next to engagement.")
+          f"{could_be_gate:.1f} pp could be the gate (not certified). Engagement separates retention far more than "
+          "the gate version does; this compares associations and does not rank what changing each would achieve.")
     out["ret_gap_by_dimension"] = Fig("ret_gap_by_dimension", "retention", F.fig_gap_by_dimension(
         gaps, "Which dimension separates D7 retention the most? (pp, best − worst segment)", tk), tk)
 
@@ -327,7 +328,7 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
           f"{sgn(dec['within_never_reached_30']*100)} pp from players who never met a gate; neither can be the gate "
           f"(imbalance or chance). The rest, {sgn(dec['within_reached_30']*100)} pp per install (95% CI {num(ci[0]*100)} to "
           f"{sgn(ci[1]*100)}), is the part the gate could explain, not an estimate of its effect: players with 15–29 "
-          f"rounds, who never met a gate, show a similar gap to those who could. No sign of a retention benefit.")
+          f"rounds, almost none of whom can have met a gate, show a similar gap to those who could. No sign of a retention benefit.")
     out["gate_decomposition"] = Fig("gate_decomposition", "gate", F.fig_gap_decomposition(
         parts, "Where the naive D7 gap comes from (pp of installs)", tk), tk)
 

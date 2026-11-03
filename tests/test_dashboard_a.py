@@ -4,7 +4,7 @@ Each page is run on its own (dashboard/ and the repo root on sys.path, like
 `streamlit run dashboard/app.py` sets up), must raise no exception, must show the
 key numbers in reports/results.json (and reports/tables/), must recompute its
 output when an interactive control changes, and must not repeat wording withdrawn
-in v2, v3 and v3.1. Pages only read the caches in data/processed/ and
+in v2, v3, v3.1 and v3.2. Pages only read the caches in data/processed/ and
 reports/results.json, so build those first (`python run.py --only analysis`).
 
 Run:  .venv/bin/python tests/test_dashboard_a.py      (pytest also collects the test_* functions)
@@ -42,6 +42,23 @@ DAY_TABLE = pd.read_csv(ROOT / "reports" / "tables" / "ad_lift_by_most_ads_day.c
 
 # Wording withdrawn in v2 / v3 / v3.1; none may come back on these pages.
 STALE = {
+    # v3.2 interpretation and wording guards
+    '15–29 rounds treated as certainly gate-free': re.compile('players\\s+with\\s+15[–-]29\\s+rounds,\\s+who\\s+never\\s+met\\s+a\\s+gate', re.I),
+    'measured first session': re.compile('\\bfirst\\s+session\\b', re.I),
+    'measured session-to-Day-1 loss': re.compile('between\\s+the\\s+first\\s+session\\s+and\\s+Day\\s+1', re.I),
+    'retired funnel drop': re.compile('\\b51\\s+pp\\b', re.I),
+    'D1 non-return overstated': re.compile('\\bnever\\s+return\\b', re.I),
+    'causal extra-play claim': re.compile('buys\\s+a\\s+little|buy\\s+some\\s+extra\\s+play|does\\s+buy', re.I),
+    '40-round threshold overstated': re.compile('past\\s+40\\s+rounds|went\\s+past\\s+40', re.I),
+    'causal lever ranking': re.compile('smallest\\s+lever|minor\\s+lever', re.I),
+    'R6 bound claim': re.compile('\\bceiling\\b|at\\s+most\\s+about\\s+0\\.26|worth\\s+at\\s+most', re.I),
+    'unmeasured marginal lift assumption': re.compile('will\\s+be\\s+smaller', re.I),
+    'revenue-free return label': re.compile('iROAS', re.I),
+    'p-value interpreted as an effect probability': re.compile('unlikely\\s+to\\s+be\\s+zero', re.I),
+    'unconfirmed assignment cause': re.compile('went\\s+wrong|is\\s+broken', re.I),
+    'both gates placed at level 30': re.compile('where\\s+the\\s+first\\s+gate\\s+sits\\s+in\\s+either\\s+version', re.I),
+    'target sample direction': re.compile('would\\s+understate\\s+the\\s+sample', re.I),
+    'D7 metric overstated': re.compile('gone\\s+by\\s+Day\\s+7', re.I),
     # still withdrawn from v2
     "saturation claim": re.compile(r"saturat", re.I),
     "'8 of 24 hours' argument": re.compile(r"\b8 of 24\b"),
@@ -79,7 +96,7 @@ STALE = {
                                              r"not powered to measure", re.I),
     # v3 persona: the game is the company's other product, not a stand-in
     "persona: 'not our app' / 'standing in'": re.compile(r"not our app|standing in for our app", re.I),
-    # v3.1 (precision of wording; delta rows a-n, plus "by Day 7")
+    # v3.1 (precision of wording; table rows a-n, plus "by Day 7")
     "(a) 'the same −0.87 pp gap' (write: a similar gap)": re.compile(r"\bsame (?:[−-]0\.87 pp )?gap\b", re.I),
     "(b) 'the gap sits with … not with the extra installs'": re.compile(r"gap sits with|not with the extra", re.I),
     "(c) negative control 'points the same way'": re.compile(r"points the same way", re.I),
@@ -411,11 +428,21 @@ def test_p3_retention() -> None:
     assert early_m.proto.delta == f"only {EARLY['retention_7'] * 100:.1f}% back on Day 7" == "only 2.3% back on Day 7"
     assert f"at most {EARLY['max_bucket_retention_7'] * 100:.1f}%" in early_m.help
     default_tk = takeaways(at)
+    assert any("55.5% of installs don't return on Day 1: the biggest drop" in x and
+               "29.9 pp of installs return on Day 1 but not on Day 7 (14.6% return on both)" in x
+               for x in default_tk)
+    funnel_chart = json.loads(at.get("plotly_chart")[0].proto.spec)["data"][0]
+    assert funnel_chart["y"] == ["Installed", "Returned on Day 1", "Returned on Day 1 and Day 7"]
+    assert CK["overall"]["played_any_round_14d"] == 86194
+    assert round(CK["overall"]["share_played_any_round_14d"] * 100, 1) == 95.6
     assert any("Players with < 15 rounds" in x and "2.3%" in x and "not a Day-0 targeting rule" in x
                for x in default_tk)
     median = int(RESULTS["data_quality"]["cookie"]["rounds_p50"])
     assert any(f"Half of players play {median} rounds or fewer" in x for x in default_tk)
     text = flat_text(at)
+    assert "95.6% of installs play at least one round at some point in their first 14 days" in text
+    assert "rounds are 14-day totals, so this is not a first-session measure" in text
+    assert "this compares associations and does not rank what changing each would achieve" in text
     assert "partly definitional" in text and "small next to engagement" in text and "one install cohort" in text
     assert "naive gap between unbalanced arms: about 60% of it sits where the gate cannot act" in text  # row m
     # persona: the company's mobile game, a different product (not a stand-in)
@@ -513,7 +540,9 @@ def test_p7_decision() -> None:
     assert f"CPM < USD {be['point']:.2f} (USD {be['ci_low']:.2f} at the pessimistic end)" in r1
     con = AD["heterogeneity"]["exposure_bucket"]["concentration"]
     assert f"{con['share_ad_users_36_200'] * 100:.0f}% of ad users who saw 36–200 ads" in r2
-    assert f"{thousands(pw['total_n_for_10pct_rel_lift']['0.5'])} users (50/50)" in r2
+    assert f"{thousands(pw['total_n_for_10pct_rel_lift']['0.5'])} users of the ad-vs-PSA design is a benchmark" in r2
+    assert "pre-agreed smallest marginal lift worth paying for" in r2
+    assert "not this test's sample size" in r2
     assert "randomizes the delivery schedule" in r3 and recs.loc["R3", "Main risk"] == \
         "Missing a small real timing effect."
     ses = pw["power_at_relative_lift"]["0.1"]
@@ -536,8 +565,11 @@ def test_p7_decision() -> None:
     r6s = EARLY["onboarding_test_sizing"]
     assert f"{EARLY['share_of_installs'] * 100:.0f}% play < 15 rounds and only {EARLY['retention_7'] * 100:.1f}%" in r6
     gap = EARLY["d7_if_returned_day1"] - EARLY["d7_if_not_returned_day1"]
-    assert f"≈{gap:.2f} pp of D7 ({EARLY['d7_if_returned_day1'] * 100:.1f}% vs. " \
-           f"{EARLY['d7_if_not_returned_day1'] * 100:.1f}%)" in r6
+    assert f"would add about {gap:.2f} pp of D7" in r6
+    assert f"non-returners' {EARLY['d7_if_not_returned_day1'] * 100:.1f}% D7" in r6
+    assert f"Day-1 returners' {EARLY['d7_if_returned_day1'] * 100:.1f}%" in r6
+    assert "Illustrative scenario, not a forecast or an upper bound" in r6
+    assert "R6's real impact must be measured" in r6
     assert f"≈{thousands(r6s['players_needed_5050'])} target players (≈{thousands(r6s['installs_needed_5050'])} " \
            "installs) at 50/50" in r6
 

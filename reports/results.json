@@ -571,7 +571,9 @@
       "retention_1_ci_high": 0.44846026,
       "retention_7": 0.18605579,
       "retention_7_ci_low": 0.18352943,
-      "retention_7_ci_high": 0.18860891
+      "retention_7_ci_high": 0.18860891,
+      "played_any_round_14d": 86194,
+      "share_played_any_round_14d": 0.95571473
     },
     "funnel": [
       {
@@ -581,16 +583,10 @@
         "step_conversion": null
       },
       {
-        "step": "Played at least 1 round",
-        "players": 86194,
-        "share_of_installs": 0.95571473,
-        "step_conversion": 0.95571473
-      },
-      {
         "step": "Returned on Day 1",
         "players": 40153,
         "share_of_installs": 0.44521444,
-        "step_conversion": 0.46584449
+        "step_conversion": 0.44521444
       },
       {
         "step": "Returned on Day 1 and Day 7",

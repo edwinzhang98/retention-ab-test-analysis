@@ -32,6 +32,8 @@ for _p in (str(ROOT), str(DASHBOARD)):
         sys.path.insert(0, _p)
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+from common import p_text  # noqa: E402
+from src import stats as S  # noqa: E402
 
 VIEWS = DASHBOARD / "views"
 TABLES = ROOT / "reports" / "tables"
@@ -49,6 +51,23 @@ _CATALOG: dict = {}
 # cannot slip through. Checked on every rendered text element and on the page sources (which also covers branches
 # a default run does not render).
 WITHDRAWN = {
+    # v3.2 interpretation and wording guards
+    '15–29 rounds treated as certainly gate-free': 'players\\s+with\\s+15[–-]29\\s+rounds,\\s+who\\s+never\\s+met\\s+a\\s+gate',
+    'measured first session': '\\bfirst\\s+session\\b',
+    'measured session-to-Day-1 loss': 'between\\s+the\\s+first\\s+session\\s+and\\s+Day\\s+1',
+    'retired funnel drop': '\\b51\\s+pp\\b',
+    'D1 non-return overstated': '\\bnever\\s+return\\b',
+    'causal extra-play claim': 'buys\\s+a\\s+little|buy\\s+some\\s+extra\\s+play|does\\s+buy',
+    '40-round threshold overstated': 'past\\s+40\\s+rounds|went\\s+past\\s+40',
+    'causal lever ranking': 'smallest\\s+lever|minor\\s+lever',
+    'R6 bound claim': '\\bceiling\\b|at\\s+most\\s+about\\s+0\\.26|worth\\s+at\\s+most',
+    'unmeasured marginal lift assumption': 'will\\s+be\\s+smaller',
+    'revenue-free return label': 'iROAS',
+    'p-value interpreted as an effect probability': 'unlikely\\s+to\\s+be\\s+zero',
+    'unconfirmed assignment cause': 'went\\s+wrong|is\\s+broken',
+    'both gates placed at level 30': 'where\\s+the\\s+first\\s+gate\\s+sits\\s+in\\s+either\\s+version',
+    'target sample direction': 'would\\s+understate\\s+the\\s+sample',
+    'D7 metric overstated': 'gone\\s+by\\s+Day\\s+7',
     "worst-case wording (it is the best case for gate_40)": r"worst[\s_-]*case",
     "'no engagement difference'": r"no engagement\s+difference",
     "'no sign of any / a benefit' (write: a retention benefit)": r"no sign of (?:any|a)\s+benefit",
@@ -471,10 +490,10 @@ def test_p5_contrast_is_the_raw_difference_with_an_agresti_caffo_ci():
     seg = at.dataframe[0].value.set_index("Day")                              # the segment table, Holm, α = 0.05
     assert np.allclose(seg["Diff. vs rest"], seg["Lift"] - seg["Lift, rest"])
     for col, src in (("Diff. vs rest", "diff_vs_rest"), ("CI centre (adjusted)", "diff_vs_rest_ac"),
-                     ("CI low", "diff_vs_rest_ci_low"), ("CI high", "diff_vs_rest_ci_high"),
-                     ("Adj. p", "p_vs_rest_adj")):
-        scale = 1 if col == "Adj. p" else 100
-        assert np.allclose(seg.loc[day.index, col].to_numpy(), day[src].to_numpy() * scale), col
+                     ("CI low", "diff_vs_rest_ci_low"), ("CI high", "diff_vs_rest_ci_high")):
+        assert np.allclose(seg.loc[day.index, col].to_numpy(), day[src].to_numpy() * 100), col
+    for col, src in (("Adj. p", "p_vs_rest_adj"), ("Adj. p, lift ≠ 0", "p_adj")):
+        assert seg.loc[day.index, col].tolist() == day[src].map(p_text).tolist(), col
     # the adjusted centre is the middle of the Agresti–Caffo CI (the raw point need not be)
     assert np.allclose(seg["CI centre (adjusted)"], (seg["CI low"] + seg["CI high"]) / 2)
     cap = [c.value for c in at.caption if "Diff. vs rest" in c.value][0]
@@ -531,6 +550,13 @@ def test_p5_counts_match_results_for_every_dimension_and_correction():
             want = (HET[dim]["differs_from_rest"][corr], HET[dim]["lift_positive"][corr])
             assert got == want, (dim, corr, got, want)
             assert int(numbers(note(metric(at, "Differ from the rest")))[0]) == HET[dim]["n_segments"]
+            shown = at.dataframe[0].value
+            expected = pd.read_csv(TABLES / f"ad_lift_by_{dim}.csv")
+            for col, raw_col in (("Adj. p", "p_vs_rest"), ("Adj. p, lift ≠ 0", "p_value")):
+                adjusted = S.adjust_pvalues(expected[raw_col], corr)
+                assert shown[col].tolist() == [p_text(p) for p in adjusted], (dim, corr, col)
+                if any(p < 1e-4 for p in adjusted):
+                    assert "p < 0.0001" in shown[col].tolist()
         assert_no_withdrawn(at, f"p5 {dim}")
 
 
@@ -809,7 +835,7 @@ def test_p6_guardrails_are_read_where_the_gate_can_act():
     assert "diluted read for Day 1" in d1_tk and "D1 effect where the gate can act" not in d1_tk
     assert metric(at, "Median rounds · 30+ rounds").value == f"{rr['median_t']:.0f} vs {rr['median_c']:.0f}"   # 75/72
     sp = rr["share_past_40_rounds"]
-    m = metric(at, "Past 40 rounds · 30+ rounds")
+    m = metric(at, "At least 40 rounds · 30+ rounds")
     assert norm(m.value) == pp(sp["abs_lift"], 1)                                                 # +1.8 pp
     assert note(m).startswith(f"{sp['rate_t']:.1%} vs {sp['rate_c']:.1%}")                       # 83.2% vs 81.4%
     assert ci_from_note(m) == (round(sp["abs_ci_low"] * 100, 1), round(sp["abs_ci_high"] * 100, 1))
@@ -817,6 +843,8 @@ def test_p6_guardrails_are_read_where_the_gate_can_act():
     assert f"player mix {pp(dec1['composition'])}" in text                                        # −0.42 pp
     assert f"mean difference ({rd['mean_diff']:+.2f} rounds" in text and "not a clean guardrail" in text
     assert "could have reached level 30" in text and "no sign of a retention benefit" in text
+    assert "assignment is uncertified" in text and "group is defined by rounds played" in text
+    assert "does not show that gate_40 causes more play" in text
     labels = [m.label for m in at.metric]
     assert not any(lb.startswith(("D1 drop", "Mean rounds diff", "Worst")) for lb in labels), labels
 

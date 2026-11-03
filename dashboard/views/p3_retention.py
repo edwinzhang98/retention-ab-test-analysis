@@ -196,8 +196,8 @@ caveat("Rounds are counted over each player's first 14 days, which overlaps the 
        "that pushing players to play more would keep them. An experiment has to show that.")
 
 st.markdown(
-    f"**What we recommend (R6).** Focus retention work on first session → Day 1. Players with fewer than 15 rounds "
-    f"are {early['share_of_installs'] * 100:.0f}% of installs and only {early['retention_7'] * 100:.1f}% of them play "
+    f"**What we recommend (R6).** Focus retention work on the Day-1 return. Players with fewer than 15 rounds "
+    f"in 14 days are {early['share_of_installs'] * 100:.0f}% of installs and only {early['retention_7'] * 100:.1f}% of them play "
     f"on Day 7 (≤ {early['max_bucket_retention_7'] * 100:.1f}% in any single bucket). Day-1 return is the earliest "
     "strong signal of who stays, but it is an association: the Onboarding PM (with CRM) should test it with a "
     "randomized Day-1 re-engagement test for new players who play little on their first day, D7 primary. Sizing: "
@@ -216,18 +216,20 @@ how_to_read(f"""
 players are lost first. The game is a different product from the app the ads ran in, so segment sizes will not
 transfer one-for-one. The data has no install dates, so all players are treated as one install cohort.
 
-**Funnel.** Each bar is the share of all installs that made it to a step. The biggest single drop is between the
-first session and Day 1: {(1 - ov['retention_1']) * 100:.1f}% of new players don't come back on Day 1. The last bar
+**Funnel.** Each bar is the share of all installs that made it to a nested, time-ordered step. The biggest drop is
+from install to Day 1: {(1 - ov['retention_1']) * 100:.1f}% of new players don't come back on Day 1. The last bar
 counts players back on Day 1 *and* Day 7, so it is lower than overall D7 retention ({ov['retention_7'] * 100:.1f}%),
-which also includes players who skipped Day 1. The steps are counted independently: {zero_round_d1_flags()}
-players with 0 rounds are flagged as back on Day 1 (the flag means "came back to the game"), about 0.1% of players,
-and no conclusion depends on it.
+which also includes players who skipped Day 1. A further {(ov["retention_1"] - ck["funnel"][2]["share_of_installs"]) * 100:.1f} pp
+of installs return on Day 1 but not on Day 7 ({ck["funnel"][2]["share_of_installs"] * 100:.1f}% return on both).
+{ov["share_played_any_round_14d"] * 100:.1f}% of installs play at least one round at some point in their first 14 days
+(rounds are 14-day totals, so this is not a first-session measure). {zero_round_d1_flags()} players with 0 rounds are
+flagged as back on Day 1; the flag means "came back to the game".
 
 **Gap by dimension.** For three ways of splitting players, the bar is the difference in D7 retention
 between the best and the worst group. A long bar means the split separates stayers from leavers well. Engagement
 depth separates them by far the most, partly by construction (see the note on rounds). The version gap is small next
 to engagement, and it is the naive gap between unbalanced arms: about {not_gate_pct:.0f}% of it sits where the gate
-cannot act (page 6).
+cannot act (page 6). This compares associations and does not rank what changing each would achieve.
 
 **Segment explorer.** Choose how to split players and which metric to show. Bars are the share retained in each
 group; the thin whiskers are the 95% interval (the plausible range for that group's true rate), and n is the group

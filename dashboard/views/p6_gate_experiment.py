@@ -283,7 +283,7 @@ kpi(c2, f"Without the net {ncx['excess_removed']:,}", pp(ncx["retention_7"]["abs
          f"{ci(ncx['retention_7']['abs_ci_low'], ncx['retention_7']['abs_ci_high'])}.")
 kpi(c3, "Gate could explain", pp(DEC["within_reached_30"]), f"per install · CI {ci(*dec_ci)}",
     help="The part of the naive D7 gap that sits with players who could have reached level 30 (30+ rounds), in pp per "
-         "install, with its 95% CI. Not an estimate of the gate's effect: players with 15–29 rounds, who never met a "
+         "install, with its 95% CI. Not an estimate of the gate's effect: players with 15–29 rounds, almost none of whom can have met a "
          f"gate, show a similar gap ({similar_gap}).")
 kpi(c4, "Best case for gate_40", pp(BEST["d7_diff_if_excess_removed"]), f"95% CI {ci(*BEST['ci'])}",
     help=f"The naive D7 gap if all ≈{extra_round:,} extra gate_40 installs were junk installs that never came back "
@@ -330,7 +330,7 @@ st.markdown(
     f"**Reading the decomposition.** About {round(not_gate_share * 10) * 10:.0f}% of the naive gap (player mix "
     f"{pp(DEC['composition'])}, players who never met a gate {pp(DEC['within_never_reached_30'])}) sits where the gate "
     f"cannot act. The remaining {pp(DEC['within_reached_30'])} per install is the part the gate could explain, not an "
-    "estimate of the gate's effect: players with 15–29 rounds, who never met a gate, show a similar D7 gap to "
+    "estimate of the gate's effect: players with 15–29 rounds, almost none of whom can have met a gate, show a similar D7 gap to "
     f"players with 30+ rounds ({similar_gap}), so even this part may not be the gate. Per 10,000 "
     "installs it is "
     f"≈{players(per10k[0])} Day-7 players (95% CI {players(per10k[1])} to {players(per10k[2])}).")
@@ -360,9 +360,9 @@ kpi(w3, "Median rounds · 30+ rounds", f"{RR['median_t']:.0f} vs {RR['median_c']
          "Mann–Whitney test on the whole distribution. The mean difference "
          f"({sgn(RR['mean_diff'], 1)} rounds, bootstrap 95% CI {sgn(RR['mean_diff_boot_ci'][0], 1)} to "
          f"{sgn(RR['mean_diff_boot_ci'][1], 1)}) is too noisy to read.")
-kpi(w4, "Past 40 rounds · 30+ rounds", pp(sp40["abs_lift"], 1),
+kpi(w4, "At least 40 rounds · 30+ rounds", pp(sp40["abs_lift"], 1),
     f"{sp40['rate_t']:.1%} vs {sp40['rate_c']:.1%} · CI {ci(sp40['abs_ci_low'], sp40['abs_ci_high'], 1)}",
-    help="Difference (gate_40 − gate_30) in the share of players with 30+ rounds who went past 40 rounds: "
+    help="Difference (gate_40 − gate_30) in the share of players with 30+ rounds who played at least 40 rounds: "
          f"{sp40['rate_t']:.1%} vs {sp40['rate_c']:.1%}, with the 95% CI of the difference.")
 takeaway(f"Day 1: the naive {pp(g1['abs_lift'])} (95% CI {ci(g1['abs_ci_low'], g1['abs_ci_high'])}) carries the same "
          f"imbalance (player mix {pp(DEC1['composition'])}). The part the gate could explain is "
@@ -373,11 +373,12 @@ takeaway(f"Rounds played: the all-player mean difference ({sgn(RD['mean_diff'])}
          f"{sgn(RD['mean_diff_boot_ci'][0], 1)} to {sgn(RD['mean_diff_boot_ci'][1], 1)}) carries the same imbalance, "
          "so it is not a clean guardrail. Among players with 30+ rounds, gate_40 players play a little more: median "
          f"{RR['median_t']:.0f} vs {RR['median_c']:.0f} rounds (Mann–Whitney {p_eq(RR['mannwhitney_p'])}), and "
-         f"{sp40['rate_t']:.1%} vs {sp40['rate_c']:.1%} go past 40 rounds ({pp(sp40['abs_lift'], 1)}, 95% CI "
+         f"{sp40['rate_t']:.1%} vs {sp40['rate_c']:.1%} played at least 40 rounds ({pp(sp40['abs_lift'], 1)}, 95% CI "
          f"{ci(sp40['abs_ci_low'], sp40['abs_ci_high'], 1)}); the mean difference ({sgn(RR['mean_diff'], 1)} rounds, "
          f"95% CI {sgn(RR['mean_diff_boot_ci'][0], 1)} to {sgn(RR['mean_diff_boot_ci'][1], 1)}) is too noisy to read. "
          f"Yet their D7 is not higher ({pp(d7b['abs_lift'])}, 95% CI {ci(d7b['abs_ci_low'], d7b['abs_ci_high'])}): no "
-         "sign of a retention benefit.")
+         "sign of a retention benefit. This is a descriptive difference: assignment is uncertified and the group "
+         "is defined by rounds played, so it does not show that gate_40 causes more play.")
 
 # ---------------------------------------------------------------- 5. sensitivity (live)
 st.subheader("5 · Sensitivity: does the naive result move?")
@@ -488,8 +489,10 @@ with st.container(border=True):
         f"- **Why:** there is no sign of a retention benefit. The part of the D7 gap the gate could explain is "
         f"≈{sgn(DEC['within_reached_30'] * 100, 1)} pp per install (95% CI {ci(*dec_ci)}; ≈{players(per10k[0])} "
         "Day-7 players per 10,000 installs), possibly zero, and even that may not be the gate.\n"
-        f"- **What gate_40 does offer:** players who reach level 30 (30+ rounds) play a little more (median "
-        f"{RR['median_t']:.0f} vs {RR['median_c']:.0f} rounds). If the Game PM values that, a clean re-test is the "
+        f"- **Descriptive engagement difference:** among players with 30+ rounds (who could have reached level 30), "
+        f"gate_40 players played a little more (median {RR['median_t']:.0f} vs {RR['median_c']:.0f} rounds). "
+        "Assignment is uncertified and the group is defined by rounds played, so this does not show that gate_40 "
+        "causes more play. If the Game PM values that, a clean re-test is the "
         "way to decide.\n"
         f"- **First · Eng + Analytics:** fix assignment and logging (gate_40 received ≈{extra_round:,} extra "
         f"installs, with a net excess of {lt15['net_excess_t']:,} among players with < 15 rounds): bucketing code, "
@@ -512,15 +515,16 @@ does not, so the rest of the page works out how much of the gap could be the gat
 version, with 95% intervals, and {n_boot:,} re-simulations of each difference. Both are the naive comparison, so they
 carry the imbalance with them.
 
-**Sample ratio.** A test set to split installs 50/50 should end up very close to 50/50. An imbalance bigger than chance
-allows means something in assignment or logging went wrong, for example one version gaining installs that were never
-really in the test. It is checked on the raw assignment counts. Here {p_eq(SRM['p_value'])} is below the
+**Sample ratio.** A test set to split installs 50/50 should end up very close to 50/50. An imbalance this large is unlikely
+under fair 50/50 assignment (about 1 time in 100 here). Most likely assignment or logging added low-engagement installs
+to gate_40 (or dropped them from gate_30); Engineering confirms the cause. It is checked on the raw assignment counts.
+Here {p_eq(SRM['p_value'])} is below the
 {SRM['warn_threshold']:g} warning line but above the {SRM['threshold']:g} hard stop: the direction of the result is
 informative; its size is not certified. The rounds bands were chosen after seeing the warning, so their p-values
 describe where the excess sits; they are not tests.
 
 **What "30+ rounds" means.** Rounds are counted over the first 14 days and every level takes at least one round, so a
-player with fewer than 30 rounds cannot have got past level 30, where the first gate sits in either version (at
+player with fewer than 30 rounds cannot have got past level 30, and up to level 30 the two versions are identical (at
 exactly 29 rounds, a gate_30 player who won every round can already face the gate). "30+ rounds" therefore means
 "could have reached level 30"; the data has no level field.
 

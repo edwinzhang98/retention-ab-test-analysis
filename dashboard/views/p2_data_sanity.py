@@ -238,7 +238,7 @@ def srm_panel(n_t: int, n_c: int, share_t: float, name_t: str, name_c: str, unit
     else:
         st.error(
             f"**FAIL** ({p_text(p)}): {name_t} has {signed_count(dev, 1)} {unit} against the planned count "
-            f"({abs(dev) / sd:.1f} SD). If the plan really was {planned}, assignment or logging is broken and the "
+            f"({abs(dev) / sd:.1f} SD). If the plan really was {planned}, assignment or logging may be broken and the "
             "results cannot be trusted until it is fixed.")
 
 
@@ -400,7 +400,7 @@ decision to drop it does not drive any conclusion.
 to ads (or {plan_gate * 100:.0f}% of players to gate_40). With tens or hundreds of thousands of flips, the observed
 count should land near the plan, but rarely *on* it: the typical gap is about one standard deviation ("chance gap").
 The p-value says how surprising the observed gap would be if the coin were fair; a tiny p-value means the coin, or
-the logging around it, is broken. Change the planned split or the threshold and the test is recomputed. Try
+the logging around it, may be broken. Change the planned split or the threshold and the test is recomputed. Try
 {plan_ad * 100 - 1:.0f}% for the ad arm to see a failure.
 
 **Why the ad experiment's SRM pass is uninformative.** Nobody documented the planned split; {split_ad} is inferred

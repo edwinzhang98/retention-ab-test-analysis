@@ -1,4 +1,4 @@
-# One-command build. `make all` = setup check + full pipeline.
+# One-command build. `make all` runs the full pipeline; `make setup` creates the environment.
 PY ?= .venv/bin/python
 
 .PHONY: all setup pipeline analysis sql notebooks app test clean

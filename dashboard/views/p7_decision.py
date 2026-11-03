@@ -122,7 +122,7 @@ DECISIONS = [
      "assignment, not a slot we buy.",
      "modest for day, and not a lever we can buy; none for hour; daypart rests on one control conversion at night."),
     ("Which new users leave first?", "TEST", "blue",
-     "Focus on first session → Day 1; test a randomized Day-1 re-engagement nudge (R6).",
+     "Focus on the Day-1 return; test a randomized Day-1 re-engagement nudge (R6).",
      f"{(1 - ov['retention_1']) * 100:.1f}% of installs don't come back on Day 1, the largest drop. Players with "
      f"< 15 rounds are {early['share_of_installs'] * 100:.0f}% of installs and only "
      f"{early['retention_7'] * 100:.1f}% of them play on Day 7; Day-1 returners are {d7_yes / d7_no:.1f}× as likely "
@@ -138,7 +138,9 @@ DECISIONS = [
      f"({ci_text(gate_ci[0], gate_ci[1], unit='')}), not an estimate of its effect and possibly zero. No sign of a "
      f"retention benefit, and no sign of a D1 effect: the part of the D1 gap the gate could explain is "
      f"{sgn_pp(d1_eff)} per install ({ci_text(d1_ci[0], d1_ci[1], unit='')}). Among players with 30+ rounds, "
-     f"gate_40 players play a little more (median {rr['median_t']:.0f} vs {rr['median_c']:.0f} rounds), but their D7 "
+     f"gate_40 players played a little more (median {rr['median_t']:.0f} vs {rr['median_c']:.0f} rounds; descriptive). "
+     "Assignment is uncertified and the group is defined by rounds played, so it does not show that gate_40 causes "
+     f"more play. Their D7 "
      f"is not higher ({sgn_pp(d7_30['abs_lift'])}, {ci_text(d7_30['abs_ci_low'], d7_30['abs_ci_high'], unit='')}).",
      "weak on the size of the effect (not certified); enough for 'don't ship', because gate_30 is the status quo."),
 ]
@@ -177,9 +179,10 @@ RECS = pd.DataFrame([
      "Expected impact": f"Learn the marginal return before committing ≈2× spend. Today's lift sits in the "
                         f"{con['share_ad_users_36_200'] * 100:.0f}% of ad users who saw 36–200 ads, so the average "
                         "return may not hold at 2×.",
-     "How we'll measure": "Incremental conversions per extra USD 1K spent (marginal iROAS).",
-     "Main risk": f"The 2×-vs-1× difference will be smaller than ad-vs-PSA, so expect to need more than the "
-                  f"{k(n10['0.5'])} users (50/50) that a {sesoi * 100:.0f}% ad-vs-PSA lift needs. Heavy users may "
+     "How we'll measure": "Incremental conversions per extra USD 1K spent.",
+     "Main risk": "The marginal lift of extra impressions may be smaller than the ad-vs-PSA lift. Size this test "
+                  "on a pre-agreed smallest marginal lift worth paying for; the "
+                  f"{k(n10['0.5'])} users of the ad-vs-PSA design is a benchmark, not this test's sample size. Heavy users may "
                   "tire of more ads (not measurable here)."},
     {"ID": "R3", "Owner": "Media buyer",
      "What": "Don't re-plan spend by day or hour. If timing matters, pre-register a test that randomizes the "
@@ -205,9 +208,10 @@ RECS = pd.DataFrame([
      "Expected impact": f"Avoids a change with no sign of a retention benefit. The part of the D7 gap the gate could "
                         f"explain is ≈{sgn(gate_eff * 100, 1)} pp per install "
                         f"({ci_text(gate_ci[0], gate_ci[1], unit='')}; ≈{abs(gate_eff) * PER:,.0f} fewer Day-7 "
-                        f"players per {PER:,} installs), and even that may not be the gate. gate_40 does let players "
-                        f"who reach level 30 play a little more (median {rr['median_t']:.0f} vs. "
-                        f"{rr['median_c']:.0f} rounds).",
+                        f"players per {PER:,} installs), and even that may not be the gate. Among players with "
+                        f"30+ rounds (who could have reached level 30), gate_40 players played a little more "
+                        f"(median {rr['median_t']:.0f} vs. {rr['median_c']:.0f} rounds; descriptive). Assignment is "
+                        "uncertified and the group is defined by rounds played, so it does not show that gate_40 causes more play.",
      "How we'll measure": f"Any re-test: pre-register a "
                           f"{retest['smallest_d7_change_per_install'] * 100:.1f} pp D7 change per install as the "
                           "smallest change worth acting on (agree with the Game PM); "
@@ -219,14 +223,14 @@ RECS = pd.DataFrame([
      "Main risk": f"Quoting the raw {sgn_pp(dec['naive_diff'])} would overstate the effect; missing a small real "
                   "effect either way."},
     {"ID": "R6", "Owner": "Onboarding PM (with CRM)",
-     "What": "Focus retention work on first session → Day 1: a randomized Day-1 re-engagement test for new players "
+     "What": "Focus retention work on the Day-1 return: a randomized Day-1 re-engagement test for new players "
              "who play little on their first day, D7 primary.",
      "Expected impact": f"Targets the biggest drop: {(1 - ov['retention_1']) * 100:.1f}% of installs don't return on "
                         f"Day 1; {early['share_of_installs'] * 100:.0f}% play < 15 rounds and only "
-                        f"{early['retention_7'] * 100:.1f}% of them play on Day 7. Ceiling, not a forecast: each 1 pp "
-                        "of installs moved from \"no Day-1 return\" to \"returned\" is worth at most "
-                        f"≈{d7_yes - d7_no:.2f} pp of D7 ({d7_yes * 100:.1f}% vs. {d7_no * 100:.1f}%), if they then "
-                        "behaved like today's Day-1 returners.",
+                        f"{early['retention_7'] * 100:.1f}% of them play on Day 7. Illustrative scenario, not a forecast "
+                        f"or an upper bound: shifting 1 pp of installs from the non-returners' {d7_no * 100:.1f}% D7 "
+                        f"to the Day-1 returners' {d7_yes * 100:.1f}% would add about {d7_yes - d7_no:.2f} pp of D7; "
+                        "R6's real impact must be measured.",
      "How we'll measure": f"D7 among targeted players (primary), D1 (secondary). Sizing: "
                           f"+{r6['target_lift_abs'] * 100:.1f} pp D7 on the {early['retention_7'] * 100:.1f}% base "
                           f"(placeholder target) needs ≈{k(r6['players_needed_5050'])} target players "
@@ -463,7 +467,8 @@ with risk_col:
   exploratory and never used as covariates. As a sensitivity check, lift standardized over these strata is
   {min(std_lifts):.2f} to {max(std_lifts):.2f} pp vs {t['abs_lift'] * 100:.2f} pp crude: no reversal.
 - **Multiple comparisons.** One interaction test per dimension ({het['n_dimensions_explored']} explored: day, hour,
-  exposure; dayparts regroup hours), then segment-vs-rest contrasts with Holm correction. Per-segment "lift ≠ 0"
+  exposure), then segment-vs-rest contrasts with Holm correction. Bonferroni (p × 3) covers those original interaction
+  tests. Daypart and Night-exclusion are later descriptive diagnostics and are not covered by this adjustment. Per-segment "lift ≠ 0"
   tests measure power, not heterogeneity, so they are not used as evidence.
 - **Gate experiment.** SRM WARNING on raw assignment counts ({p_text(gsrm['p_value'])}). The net excess sits among
   players with fewer than 15 rounds ({sgn(net_lt15, 0)}, {p_text(sbs['rounds_lt_15']['p_value'])}, a subset chosen

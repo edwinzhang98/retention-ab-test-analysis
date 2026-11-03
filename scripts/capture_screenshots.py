@@ -9,6 +9,7 @@ Output: reports/screenshots/<page>.png
 from __future__ import annotations
 
 import argparse
+import math
 import subprocess
 import sys
 import time
@@ -64,6 +65,13 @@ def main() -> None:
                 page.wait_for_selector(".js-plotly-plot", timeout=30_000)
                 # wait until the script run has finished (the "Running... / Stop" widget disappears)
                 page.wait_for_selector("[data-testid='stStatusWidget']", state="hidden", timeout=30_000)
+                page.evaluate("window.scrollTo(0, 0)")
+                first_chart = page.locator(".js-plotly-plot").first.bounding_box()
+                # include the first chart when it sits within 2,200 px; otherwise keep the first screen
+                # (KPI cards and tables lead those pages) rather than cut a chart in half
+                bottom = math.ceil(first_chart["y"] + first_chart["height"] + 80)
+                height = max(1000, bottom) if bottom <= 2200 else 1000
+                page.set_viewport_size({"width": a.width, "height": height})
                 page.wait_for_timeout(1500)  # let remaining charts finish drawing
                 errors = page.locator("[data-testid='stException']").count()
                 path = OUT / f"{name}.png"

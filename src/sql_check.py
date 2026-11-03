@@ -610,11 +610,16 @@ def _retention(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     # The install -> Day 1 -> Day 1 and Day 7 funnel, read off the segment rows
     funnel = {step["step"]: step["players"] for step in cookie["funnel"]}
     for step, value in (
-        ("Played at least 1 round", seg.at[overall, "players"] - seg.at[("rounds_bucket", "0"), "players"]),
+        ("Installed", seg.at[overall, "players"]),
         ("Returned on Day 1", seg.at[overall, "d1_retained"]),
         ("Returned on Day 1 and Day 7", seg.at[("d1_status", "Returned Day 1"), "d7_retained"]),
     ):
         ck.add(f"funnel: {step}", f, value, j + f"funnel[{step}].players", funnel[step])
+    played_14d = seg.at[overall, "players"] - seg.at[("rounds_bucket", "0"), "players"]
+    ck.add("14-day play: players with at least one round", f, played_14d,
+           j + "overall.played_any_round_14d", cookie["overall"]["played_any_round_14d"])
+    ck.add("14-day play: share with at least one round", f, played_14d / seg.at[overall, "players"],
+           j + "overall.share_played_any_round_14d", cookie["overall"]["share_played_any_round_14d"], TOL_JSON)
 
     # D7 spread across segments, the "which dimension separates players most" headline
     for gap in cookie["gap_by_dimension"]:

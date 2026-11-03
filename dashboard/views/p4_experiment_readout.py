@@ -555,7 +555,7 @@ with st.container(border=True):
         "(page 5). Run a user-level test where one arm gets up to 2× today's impressions per user (the closest "
         "stand-in for 2× budget) or a frequency cap, split 50/50 or 80/20, with users tiered by activity measured "
         "*before* the test (a true budget test needs a geo split). Read out incremental conversions per extra "
-        "USD 1K spent (marginal iROAS).\n"
+        "USD 1K spent.\n"
         f"- **R4 · Analytics + Eng:** next time use a 50/50 or 80/20 split instead of {SPLIT0} (at {SPLIT0} this "
         f"test had only {sesoi0['power_current_split']:.0%} power for a {SESOI0:.0%} lift, against "
         f"{fmt_power(sesoi0['power_5050_same_total'])} for the same users at 50/50), log assignment timestamps, "
@@ -613,7 +613,8 @@ beyond that is a new cost.
   what the next USD 1K buys, which is what R2's test is for.
 - "The SRM check passed, so assignment is fine." The split is most likely a fixed quota (a valid design), so the check
   passes by construction; exposure parity is the check that carries information.
-- "p < 0.0001 means a big effect." It means the effect is very unlikely to be zero. The interval shows how big it is.
+- "p < 0.0001 means a big effect." If ads had no effect, a difference this large would be very unlikely; the confidence
+  interval shows the effect sizes compatible with the data.
 - "The effect will last." With no timestamps we cannot check whether it fades over time (novelty effect).
 """)
 

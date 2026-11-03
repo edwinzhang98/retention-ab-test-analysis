@@ -18,7 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from common import (C, F, S, caveat, how_to_read, load_cache, load_catalog_takeaways, load_results, page_header,
-                    show, takeaway)
+                    p_text as common_p_text, show, takeaway)
 
 RES = load_results()
 AD = RES["ad"]
@@ -242,7 +242,9 @@ st.markdown(f"| Dimension | Segments | Interaction p | χ² (df) | Allowing for 
 st.caption("Likelihood-ratio test of ad × segment in a binomial (logit) model, so it asks whether the lift differs "
            "on the odds scale; the segment-vs-rest contrasts in Step 2 are on the percentage-point scale, so the two "
            "need not agree exactly. ▸ marks the dimension selected above. "
-           f"'Allowing for {N_DIMS} dimensions' multiplies p by the {N_DIMS} dimensions explored (Bonferroni).")
+           f"'Allowing for {N_DIMS} dimensions' multiplies p by the {N_DIMS} original interaction tests (Bonferroni): "
+           "peak day, peak hour and exposure bucket. Daypart and Night-exclusion are later descriptive diagnostics "
+           "and are not covered by this adjustment.")
 takeaway(f"Only peak day shows a signal that holds up ({p_eq(hd['lrt']['p_value'])}; "
          f"{p_text(hd['lrt_p_bonferroni_3_dims'])} allowing for the {N_DIMS} dimensions explored). Hour shows none "
          f"({p_eq(hh['lrt']['p_value'])}); the daypart signal comes from one sparse cell "
@@ -340,13 +342,13 @@ with st.expander(f"Segment table: all {n_seg} {d['prose']} ({CORR_SHORT[method]}
         "CI centre (adjusted)": tab["diff_vs_rest_ac"] * 100,
         "CI low": tab["diff_vs_rest_ci_low"] * 100,
         "CI high": tab["diff_vs_rest_ci_high"] * 100,
-        "Adj. p": tab["p_vs_rest_adj"],
+        "Adj. p": tab["p_vs_rest_adj"].map(common_p_text),
         "Differs": np.where(tab["differs_adj"], "Yes", "No"),
-        "Adj. p, lift ≠ 0": tab["p_adj"],
+        "Adj. p, lift ≠ 0": tab["p_adj"].map(common_p_text),
         "Lift ≠ 0": np.where(tab["significant_adj"], "Yes", "No"),
     })
     signed = st.column_config.NumberColumn(format="%+.2f")
-    pcol = st.column_config.NumberColumn(format="%.4f")
+    pcol = st.column_config.TextColumn()
     st.dataframe(show_tab, hide_index=True, width="stretch",
                  column_config={"Ad users": st.column_config.NumberColumn(format="localized"),
                                 "PSA users": st.column_config.NumberColumn(format="localized"),
@@ -447,8 +449,9 @@ segments don't: counting "significant" segments measures sample size, not hetero
 (does a segment differ from the rest?) can justify treating segments differently.
 
 **Step 1, the interaction test.** One likelihood-ratio test per dimension asks whether the lift differs across its
-segments *at all*. Quote it before any single segment. We explored {N_DIMS} dimensions (day, hour, exposure; daypart
-only regroups hour), so a p-value near 0.05 should be read against a stricter bar: day's
+segments *at all*. Quote it before any single segment. Bonferroni (p × {N_DIMS}) covers the three original interaction
+tests (peak day, peak hour, exposure bucket). The daypart cut and the Night-exclusion check were added later as
+descriptive diagnostics and are not covered by this adjustment. A p-value near 0.05 should be read against a stricter bar: day's
 {p_text(hd['lrt']['p_value'])} becomes {p_text(hd['lrt_p_bonferroni_3_dims'])} after allowing for that. The test
 works on the odds scale (a logistic model), while the segment-vs-rest contrasts work in percentage points, so the
 two can disagree a little at the margin.

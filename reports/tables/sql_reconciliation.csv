@@ -359,9 +359,11 @@ retention by version = gate_30: D1 retention,0.448197946263,0.4481979462627799,0
 retention by version = gate_30: D7 retention,0.190183225576,0.19018322557551623,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
 retention by version = gate_40: D1 retention,0.442282749676,0.44228274967574577,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
 retention by version = gate_40: D7 retention,0.182000043967,0.18200004396667327,0.0,True,1e-09,06_retention_by_segment.sql,reports/tables/retention_by_version.csv
-funnel: Played at least 1 round,86194,86194,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Played at least 1 round].players
+funnel: Installed,90188,90188,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Installed].players
 funnel: Returned on Day 1,40153,40153,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Returned on Day 1].players
 funnel: Returned on Day 1 and Day 7,13182,13182,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.funnel[Returned on Day 1 and Day 7].players
+14-day play: players with at least one round,86194,86194,0.0,True,0.0,06_retention_by_segment.sql,results.json cookie.overall.played_any_round_14d
+14-day play: share with at least one round,0.955714729232,0.95571473,7.68e-10,True,5.001e-09,06_retention_by_segment.sql,results.json cookie.overall.share_played_any_round_14d
 D7 gap across rounds_bucket segments (pp),70.3566116254,70.35661163,4.61e-09,True,5.001e-09,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[rounds_bucket].gap_pp
 D7 gap across d1_status segments (pp),25.6384611165,25.63846112,3.53e-09,True,5.001e-09,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[d1_status].gap_pp
 D7 gap across version segments (pp),0.818318160884,0.81831816,8.84e-10,True,5.001e-09,06_retention_by_segment.sql,results.json cookie.gap_by_dimension[version].gap_pp

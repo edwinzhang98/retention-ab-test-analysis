@@ -2,9 +2,7 @@
 
 ## The request (verbatim, from Growth weekly sync)
 
-> 上个季度那波广告投放到底有没有带来转化？如果有，值不值得把预算翻倍？另外我们的新用户前 7 天流失很厉害，哪类用户最先走？
-
-*(English: "Did last quarter's ad campaign actually drive conversions? If so, is it worth doubling the budget? Also, we're losing a lot of new users in their first 7 days — which users leave first?")*
+> "Did last quarter's ad campaign actually drive conversions? If so, is it worth doubling the budget? Also, we're losing a lot of new users in their first 7 days — which users leave first?"
 
 **Requester:** Growth PM · **Analyst:** Product Analyst, Growth · **Standard deliverables:** an experiment readout and a retention dashboard.
 
@@ -28,7 +26,7 @@
 - **Q2(b)** could not be answered with this data. Ads seen is recorded after assignment and tracks how active a user is, so it shows *where* the lift sits (heavy users), not what an extra ad per user does (readout, R2).
 - **Q3:** the peak-day signal passed both tests: interaction p = 0.013 (0.038 allowing for the 3 dimensions explored), and Tuesday and Thursday survive Holm. But "peak day" is a user habit recorded after assignment, not a slot we can buy, so the rule above (written with buyable segments in mind) doesn't apply. The signal triggers a randomized delivery-schedule test (R3), not a reallocation.
 - **Q4** has no ship decision. It sets the target segment for an onboarding experiment (R6).
-- **Q5:** the SRM check gave a WARNING (p = 0.0086), not a FAIL, so the gate result is "not certified" rather than void. The decision rests on the status quo (keep gate_30), no sign of a retention benefit, and a decomposition of the D7 gap (R5).
+- **Q5:** the SRM check gave a WARNING (p = 0.0086), not a FAIL, so the gate result is "not certified" rather than void. The decision rests on the status quo (keep gate_30), no sign of a retention benefit, and a decomposition of the D7 gap (R5). gate_40 players with 30+ rounds played a little more (descriptive).
 
 ## Out of scope / not answerable with this data
 - **Revenue and ROI:** no revenue or cost fields. Value per conversion and CPM are explicit assumptions (see `assumptions.md`).

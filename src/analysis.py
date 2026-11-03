@@ -233,6 +233,8 @@ def ad_experiment(m: pd.DataFrame, cells: pd.DataFrame) -> tuple[dict, dict]:
 # ====================================================================== retention + gate
 def cookie_analysis(c: pd.DataFrame, c_raw: pd.DataFrame) -> tuple[dict, dict]:
     overall = R.retention_rates(c).iloc[0].to_dict()
+    overall["played_any_round_14d"] = int((c["sum_gamerounds"] > 0).sum())
+    overall["share_played_any_round_14d"] = overall["played_any_round_14d"] / len(c)
     funnel = R.funnel(c)
     by_rounds = R.retention_rates(c, "rounds_bucket")
     by_d1 = R.retention_rates(c, "d1_status")

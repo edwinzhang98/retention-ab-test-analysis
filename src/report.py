@@ -331,8 +331,8 @@ class _Report:
         self.zero_flag_share = self.zero_d1 / len(players)
         # D7 without D1 on the analysed players (results.json data_quality counts the raw file, outlier included)
         self.d7_not_d1 = int((players["retention_7"] & ~players["retention_1"]).sum())
-        # ceiling for R6: D7 gained per 1 pp of installs moved from "no Day-1 return" to "returned"
-        self.d1_ceiling = self.early["d7_if_returned_day1"] - self.early["d7_if_not_returned_day1"]
+        # Illustrative R6 scenario: D7 gained per 1 pp of installs moved between the two observed groups
+        self.d1_scenario = self.early["d7_if_returned_day1"] - self.early["d7_if_not_returned_day1"]
 
         # ad: hours whose PSA arm has zero conversions, and the 10% lift in conversions per ad flight
         hours = self.segi["most_ads_hour"]
@@ -398,15 +398,17 @@ class _Report:
             f"{pct(hold['share'], 0)} always-on holdout to keep measuring it.</strong> This test cannot say whether "
             f"doubling the budget pays: budget was never varied, and the lift sits in heavy, very active users, so "
             f"<strong>test more impressions per user (or a frequency cap) before committing &asymp;2&times; "
-            f"spend.</strong> Most new players of the company's mobile game are lost before Day 1 "
-            f"({pct(1 - o['retention_1'])} never return), and only {pct(self.early['retention_7'])} of the "
+            f"spend.</strong> {pct(1 - o['retention_1'])} of installs of the company's mobile game don't return on Day 1, "
+            f"the biggest drop, and only {pct(self.early['retention_7'])} of the "
             f"{pct(self.early['share_of_installs'], 0)} of installs who play fewer than {self.low_cut} rounds are back "
-            f"on Day 7, so <strong>retention work should start with the first session and Day 1.</strong> Finally, "
+            f"on Day 7, so <strong>retention work should focus on the Day-1 return.</strong> Finally, "
             f"<strong>keep the first gate at level {GATE_LEVEL}</strong>: gate_40 shows a D7 rate "
             f"{pp(abs(dec['naive_diff']))} lower, but that naive gap is not certified because the arms are unbalanced. "
             f"The part of it the gate could explain is about {pp(eff, sign=True)} per install ({c} CI "
             f"{ci_pp(*eff_ci)}), not an estimate of the gate's effect and possibly zero; there is no sign of a "
-            f"retention benefit."
+            f"retention benefit. Among players with 30+ rounds (who could have reached level 30), gate_40 players "
+            f"played a little more (median {num(self.rr['median_t'])} vs {num(self.rr['median_c'])} rounds; descriptive). "
+            "Assignment is uncertified and the group is defined by rounds played, so it does not show that gate_40 causes more play."
         )
         kpis = [
             ("Ad lift (absolute)", pp(t["abs_lift"], sign=True), f"{c} CI {ci_pp(t['abs_ci_low'], t['abs_ci_high'])}"),
@@ -540,9 +542,10 @@ class _Report:
                  impact=f"Learn the marginal return before committing &asymp;2&times; spend. Today's lift sits in the "
                         f"{pct(con['share_ad_users_36_200'], 0)} of ad users who saw {self.heavy_range} ads, so the "
                         f"average return may not hold at 2&times;.",
-                 measure="Incremental conversions per extra USD 1K spent (marginal iROAS).",
-                 risk=f"The 2&times;-vs-1&times; difference will be smaller than ad-vs-PSA, so expect to need more than "
-                      f"the {kn(n10['0.5'])} users (50/50) that a {pct(ses['rel'], 0)} ad-vs-PSA lift needs. Heavy "
+                 measure="Incremental conversions per extra USD 1K spent.",
+                 risk="The marginal lift of extra impressions may be smaller than the ad-vs-PSA lift. Size this test "
+                      "on a pre-agreed smallest marginal lift worth paying for; the "
+                      f"{kn(n10['0.5'])} users of the ad-vs-PSA design is a benchmark, not this test's sample size. Heavy "
                       f"users may tire of more ads (not measurable here)."),
             dict(id="R3", owner="Media buyer", chip=_chip("stop", "Don't (yet)"),
                  what="Don't re-plan spend by day or hour. If timing matters, pre-register a test that randomizes the "
@@ -572,9 +575,11 @@ class _Report:
                  impact=f"Avoids a change with no sign of a retention benefit. The part of the D7 gap the gate could "
                         f"explain is &asymp;{pp(dec['within_reached_30'], 1, sign=True)} per install ({c} CI "
                         f"{ci_pp(*eff_ci)}; &asymp;{per10k(dec['within_reached_30'])} fewer Day-7 players per 10,000 "
-                        f"installs), and even that may not be the gate. gate_40 does let players who reach level "
-                        f"{GATE_LEVEL} play a little more (median {num(self.rr['median_t'])} vs. "
-                        f"{num(self.rr['median_c'])} rounds).",
+                        f"installs), and even that may not be the gate. Among players with {GATE_LEVEL}+ rounds "
+                        f"(who could have reached level {GATE_LEVEL}), gate_40 players played a little more "
+                        f"(median {num(self.rr['median_t'])} vs. {num(self.rr['median_c'])} rounds; descriptive). "
+                        "Assignment is uncertified and the group is defined by rounds played, so it does not show "
+                        "that gate_40 causes more play.",
                  measure=f"Any re-test: pre-register a {pp(rt['smallest_d7_change_per_install'], 1)} D7 change per "
                          f"install as the smallest change worth acting on (agree with the Game PM); "
                          f"&asymp;{kn(rt['installs_needed_reacher_analysis_5050'])} installs at 50/50 with the primary "
@@ -585,14 +590,14 @@ class _Report:
                  risk=f"Quoting the raw {pp(dec['naive_diff'], sign=True)} would overstate the effect; missing a small "
                       f"real effect either way."),
             dict(id="R6", owner="Onboarding PM (with CRM)", chip=_chip("info", "Act"),
-                 what="Focus retention work on first session &rarr; Day 1: a randomized Day-1 re-engagement test for "
+                 what="Focus retention work on the Day-1 return: a randomized Day-1 re-engagement test for "
                       "new players who play little on their first day, D7 primary.",
                  impact=f"Targets the biggest drop: {pct(1 - o['retention_1'])} of installs don't return on Day 1; "
                         f"{pct(early['share_of_installs'], 0)} play &lt; {self.low_cut} rounds and only "
-                        f"{pct(early['retention_7'])} of them play on Day 7. Ceiling, not a forecast: each 1 pp of "
-                        f"installs moved from &ldquo;no Day-1 return&rdquo; to &ldquo;returned&rdquo; is worth at most "
-                        f"&asymp;{pp(self.d1_ceiling / 100)} of D7 ({pct(early['d7_if_returned_day1'])} vs. "
-                        f"{pct(early['d7_if_not_returned_day1'])}), if they then behaved like today's Day-1 returners.",
+                        f"{pct(early['retention_7'])} of them play on Day 7. Illustrative scenario, not a forecast or an "
+                        f"upper bound: shifting 1 pp of installs from the non-returners' {pct(early['d7_if_not_returned_day1'])} "
+                        f"D7 to the Day-1 returners' {pct(early['d7_if_returned_day1'])} would add about "
+                        f"{pp(self.d1_scenario / 100)} of D7; R6's real impact must be measured.",
                  measure=f"D7 among targeted players (primary), D1 (secondary). Sizing: "
                          f"{pp(sizing['target_lift_abs'], 1, sign=True)} D7 on the {pct(early['retention_7'])} base "
                          f"(placeholder target) needs &asymp;{kn(sizing['players_needed_5050'])} target players "
@@ -766,7 +771,7 @@ linked, and the game's segment sizes will not transfer one-for-one to the app.</
              ["Players with 0 rounds",
               f"{num(ck['zero_round_players'])}; {num(self.zero_d1)} of them are flagged as back on Day 1 and "
               f"{num(self.zero_d7)} on Day 7",
-              f"Kept: installed but never played, part of the funnel. The retention flags therefore mean &ldquo;came "
+              f"Kept: installed but no recorded rounds in 14 days, part of the install population. The retention flags therefore mean &ldquo;came "
               f"back to the game&rdquo;, not &ldquo;played a round&rdquo;; {pct(self.zero_flag_share)} of players, no "
               f"conclusion depends on it."],
              ["Back on Day 7 but not Day 1",
@@ -888,7 +893,7 @@ it.</p>
     # ------------------------------------------------------------------ 3 retention
     def s3_retention(self) -> str:
         o, f, gaps = self.ck["overall"], self.funnel, self.gaps
-        played = f.loc["Played at least 1 round", "share_of_installs"]
+        played = o["share_played_any_round_14d"]
         d1_share = f.loc["Returned on Day 1", "share_of_installs"]
         both = f.loc["Returned on Day 1 and Day 7"]
         c = self.conf
@@ -922,18 +927,19 @@ one-for-one.</p>
     f"{pct(o['retention_1'])} ({c} CI {pct(o['retention_1_ci_low'])}&ndash;{pct(o['retention_1_ci_high'])}), D7 "
     f"{pct(o['retention_7'])} ({pct(o['retention_7_ci_low'])}&ndash;{pct(o['retention_7_ci_high'])}).")}
 <h3>3.1 The biggest drop happens before Day 1</h3>
-<p>{pct(1 - o['retention_1'])} of installs don't return on Day 1. {pct(played)} play at least one round, but only
-{pct(d1_share)} return on Day 1, so the largest absolute loss ({(played - d1_share) * 100:.0f} pp of installs) happens
-between the first session and Day 1. {pct(o['retention_7'])} play on Day 7, and {pct(both['share_of_installs'])} of
+<p>{pct(1 - o['retention_1'])} of installs don't return on Day 1: the biggest drop. A further
+{(d1_share - both['share_of_installs']) * 100:.1f} pp of installs return on Day 1 but not on Day 7
+({pct(both['share_of_installs'])} return on both). {pct(played)} of installs play at least one round at some point in
+their first 14 days (rounds are 14-day totals, so this is not a first-session measure). {pct(o['retention_7'])} play on Day 7, and {pct(both['share_of_installs'])} of
 installs play on both Day 1 and Day 7 ({pct(both['step_conversion'])} of the Day-1 returners).</p>
 {self.fig("ret_funnel", "each bar is the share of all installs that reached the step; hover a bar for the "
           "conversion from the previous step.")}
 <h3>3.2 Day 1 is the earliest strong signal of who stays</h3>
 <p>Day-1 returners are {self.d7_yes / self.d7_no:.1f}&times; as likely to play on Day 7 ({pct(self.d7_yes)} vs
 {pct(self.d7_no)}). This is an association: it identifies who stays, it does not show that prompting a Day-1 visit
-would lift D7. That is what the experiment in R6 would test. It also sets a ceiling, not a forecast: each 1 pp of
-installs moved from &ldquo;no Day-1 return&rdquo; to &ldquo;returned&rdquo; is worth at most
-&asymp;{pp(self.d1_ceiling / 100)} of D7, and only if those players then behaved like today's Day-1 returners.</p>
+would lift D7. That is what the experiment in R6 would test. Illustrative scenario, not a forecast or an upper bound:
+shifting 1 pp of installs from the non-returners' {pct(self.d7_no)} D7 to the Day-1 returners' {pct(self.d7_yes)} would
+add about {pp(self.d1_scenario / 100)} of D7; R6's real impact must be measured.</p>
 {self.fig("ret_by_d1", "bars are D7 retention for players who did and did not come back on Day 1; whiskers are "
           f"{c} confidence intervals (tiny here because both groups are large).")}
 <h3>3.3 Engagement depth separates players most</h3>
@@ -955,8 +961,9 @@ the two gate positions (level {GATE_LEVEL} and 40).</p>
 <h3>3.4 Which dimension separates players most?</h3>
 <p>Engagement depth separates D7 retention by {eng['gap_pp']:.0f} pp (partly by construction) and Day-1 return by
 {d1g['gap_pp']:.0f} pp. The two gate versions differ by {ver['gap_pp']:.1f} pp raw (the naive comparison, examined in
-Section 6), of which only about {pp(abs(self.dec['within_reached_30']), 1)} could be the gate (not certified): a minor
-lever next to engagement.</p>
+Section 6), of which only about {pp(abs(self.dec['within_reached_30']), 1)} could be the gate (not certified).
+Engagement separates retention far more than the gate version does; this compares associations and does not rank
+what changing each would achieve.</p>
 {self.fig("ret_gap_by_dimension", "for each way of splitting players, the bar is the D7 gap between its best and "
           "worst segment. A longer bar means the dimension tells players apart better.")}
 {_callout("warn", "Association, partly by definition",
@@ -964,7 +971,7 @@ lever next to engagement.</p>
     "in which to play, so part of the rounds&ndash;retention link is built into the definitions. The pattern sizes "
     "the early-churn segment (whom to help); it is not a Day-0 targeting rule, because 14-day rounds are not known on "
     "Day 0, and it does not show that making people play more would keep them. That needs an experiment (R6).")}
-<p class="so-what"><b>So what.</b> The first session and Day 1 are where most new players are lost, and only
+<p class="so-what"><b>So what.</b> The Day-1 return is the biggest drop, and only
 {pct(early['retention_7'])} of the least-engaged {pct(early['share_of_installs'], 0)} of installs are back on Day 7.
 That is the problem for the Onboarding PM's next experiment (<a href="#recommendations">R6</a>): a randomized Day-1
 re-engagement test for new players who play little on their first day, with D7 as the primary metric. Detecting
@@ -1276,8 +1283,9 @@ estimate; the segment tables show its centre in a separate column, &ldquo;CI cen
 contrasts at &alpha; = {a:g}, about k &times; {a:g} would come out &ldquo;significant&rdquo; by
 chance alone.</li>
 </ol>
-<p>{n_dims} dimensions were explored (day, hour and exposure; dayparts regroup the hours), so an interaction p-value
-just under 0.05 is weaker than it looks. Every dimension here is a post-assignment summary of user behaviour, so all
+<p>Bonferroni (p &times; {n_dims}) covers the three original interaction tests (peak day, peak hour, exposure bucket).
+The daypart cut and the Night-exclusion check were added later as descriptive diagnostics and are not covered by
+this adjustment. An interaction p-value just under 0.05 is weaker than it looks. Every dimension here is a post-assignment summary of user behaviour, so all
 segment results are exploratory.</p>
 {summary}
 <h3>5.2 By peak ad day: modest evidence, but about users, not a day we can buy</h3>
@@ -1409,7 +1417,7 @@ hypothesis for a randomized test of more impressions per user (or a frequency ca
               f"{pp(eff, sign=True)}<br><span class='sub'>{c} CI {ci_pp(*eff_ci)}</span>", could_be,
               f"their D7 difference ({pp(b30['abs_lift'], sign=True)}, {c} CI "
               f"{ci_pp(b30['abs_ci_low'], b30['abs_ci_high'])}) &times; their share. Players with 15&ndash;"
-              f"{GATE_LEVEL - 1} rounds, who never met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, "
+              f"{GATE_LEVEL - 1} rounds, almost none of whom can have met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, "
               f"{c} CI {ci_pp(b1529['abs_ci_low'], b1529['abs_ci_high'])})"],
              ["<b>Naive gap (sum)</b>", f"<b>{pp(dec['naive_diff'], sign=True)}</b>", "&ndash;",
               "gate_40 &minus; gate_30, all players"]],
@@ -1488,7 +1496,7 @@ the naive gap, which therefore sits where the gate cannot act. The rest, <b>{pp(
 {per10k(eff_ci[1])} more), is <b>the part the gate could explain</b>, not an estimate of the gate's effect. It comes
 from a {pp(b30['abs_lift'], sign=True)} gap among the {pct(w_reach, 0)} of players with {GATE_LEVEL}+ rounds ({c} CI
 {ci_pp(b30['abs_ci_low'], b30['abs_ci_high'])}; {pval(b30['p_value'])}), and players with 15&ndash;{GATE_LEVEL - 1}
-rounds, who never met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, {c} CI
+rounds, almost none of whom can have met a gate, show a similar gap ({pp(b1529['abs_lift'], sign=True)}, {c} CI
 {ci_pp(b1529['abs_ci_low'], b1529['abs_ci_high'])}), so even this part may not be the gate.</p>
 {dec_table}
 {self.fig("gate_decomposition", "light grey bars are the parts of the naive gap that cannot be the gate (imbalance or "
@@ -1526,11 +1534,13 @@ decomposition is descriptive and uses the same unbalanced data.</p>
     f"{num(rounds['median_c'])}) carries the same imbalance and is not a clean guardrail. Among players with "
     f"{GATE_LEVEL}+ rounds, gate_40 players play a little more: median {num(rr['median_t'])} vs "
     f"{num(rr['median_c'])} rounds (Mann&ndash;Whitney {pval(rr['mannwhitney_p'])}), and "
-    f"{pct(past40['rate_t'])} vs {pct(past40['rate_c'])} go past 40 rounds "
+    f"{pct(past40['rate_t'])} vs {pct(past40['rate_c'])} played at least 40 rounds "
     f"({pp(past40['abs_lift'], 1, sign=True)}, {c} CI {ci_pp(past40['abs_ci_low'], past40['abs_ci_high'], 1, sign=True)}). "
+    "This is a descriptive difference: assignment is uncertified and the group is defined by rounds played, so "
+    "it does not show that gate_40 causes more play. "
     f"The mean difference ({_signed(rr['mean_diff'], 1)} rounds, bootstrap {c} CI "
-    f"{_signed(rr['mean_diff_boot_ci'][0], 1)} to {_signed(rr['mean_diff_boot_ci'][1], 1)}) is too noisy to read. So "
-    f"the later gate does buy some extra play, but these players' D7 is not higher "
+    f"{_signed(rr['mean_diff_boot_ci'][0], 1)} to {_signed(rr['mean_diff_boot_ci'][1], 1)}) is too noisy to read. "
+    f"These players' D7 is not higher "
     f"({pp(b30['abs_lift'], sign=True)}, {c} CI {ci_pp(b30['abs_ci_low'], b30['abs_ci_high'])}): no sign of a "
     f"retention benefit.",
 ])}
@@ -1558,9 +1568,11 @@ makes sense if the gate position matters commercially.</p>
 There is no sign of a retention benefit, and the part of the gap the gate could explain is about
 {pp(eff, 1, sign=True)} per install (&asymp;{per10k(eff)} fewer Day-7 players per 10,000 installs; {c} CI from
 {per10k(eff_ci[0])} fewer to {per10k(eff_ci[1])} more), possibly zero. The result is <b>not certified</b>: quoting the
-naive {pp(dec['naive_diff'], sign=True)} would overstate the effect. gate_40 does let players who reach level
-{GATE_LEVEL} play a little more (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds), so if the Game PM
-values that, a clean re-test is the way to decide. Fix assignment and logging first (gate_40 received
+naive {pp(dec['naive_diff'], sign=True)} would overstate the effect. Among players with {GATE_LEVEL}+ rounds
+(who could have reached level {GATE_LEVEL}), gate_40 players played a little more (median {num(rr['median_t'])}
+vs {num(rr['median_c'])} rounds; descriptive). Assignment is uncertified and the group is defined by rounds played,
+so this does not show that gate_40 causes more play. If the Game PM values that, a clean re-test is the way to
+decide. Fix assignment and logging first (gate_40 received
 &asymp;{num(self.excess_clean)} extra installs, with a net excess of {num(lt15)} among players with &lt; 15 rounds), and
 read any re-test only after it passes the daily 50/50 group-size check.</p></div>
 </section>"""
@@ -1635,12 +1647,12 @@ read any re-test only after it passes the daily 50/50 group-size check.</p></div
     "measuring the absolute lift. A true budget test needs a geo split.",
     "<b>Split:</b> 50/50 or 80/20 between the arms, with users tiered by activity measured <i>before</i> the test; an "
     "automatic daily SRM check while it runs.",
-    "<b>Metrics:</b> primary = incremental conversions per extra USD 1K spent (marginal iROAS); secondary = conversion "
+    "<b>Metrics:</b> primary = incremental conversions per extra USD 1K spent; secondary = conversion "
     "rate; guardrails = unsubscribe / complaint rate, cost per acquisition, ads per user.",
-    f"<b>Size:</b> use the sample-size calculator on the dashboard's Decision page (<code>/decision</code>). The "
-    f"2&times;-vs-1&times; difference will be smaller than ad-vs-PSA, so expect to need more than the "
-    f"&asymp;{kn(n10['0.5'])} users (50/50) that a {pct(ses['rel'], 0)} ad-vs-PSA lift on a {pct(t['rate_c'], 2)} base "
-    f"needs (&asymp;{kn(n10['0.8'])} at 80/20, &asymp;{kn(n10['0.96'])} at {self.split}).",
+    "<b>Size:</b> the marginal lift of extra impressions may be smaller than the ad-vs-PSA lift. Size this test on "
+    "a pre-agreed smallest marginal lift worth paying for; the "
+    f"{kn(n10['0.5'])} users of the ad-vs-PSA design is a benchmark, not this test's sample size. Use the "
+    "sample-size calculator on the dashboard's Decision page (<code>/decision</code>).",
     "<b>Duration and logging:</b> whole weeks, with assignment timestamps so novelty effects can be checked, and the "
     "allocation config archived with the readout.",
 ])}
@@ -1725,7 +1737,7 @@ read any re-test only after it passes the daily 50/50 group-size check.</p></div
              "small ones are shown as &ldquo;p &lt; 0.0001&rdquo;."),
             ("Sample ratio mismatch (SRM)",
              "A check that each arm received the share of users it was supposed to. If a 50/50 test ends up noticeably "
-             f"uneven, something in assignment or logging is broken and the arms may not be comparable. This project "
+             f"uneven, something in assignment or logging may be broken and the arms may not be comparable. This project "
              f"uses two levels: p &lt; {self.srm_fail:g} = FAIL (stop), p &lt; {self.srm_warn:g} = WARNING (do not "
              "certify; investigate). A split that lands exactly on the target, as in the ad test, most likely means a "
              "fixed quota: the check then passes by construction and tells us nothing. Fixed arm sizes are a valid "
@@ -1922,9 +1934,10 @@ of D7. The interactive charts are embedded with plotly.js, so the file works off
              f"{pct(con['share_ad_users_36_200'], 0)} of ad viewers who saw {heavy} ads, so the average return may "
              "not hold at twice the spend.",
              "Extra conversions per additional USD 1,000 spent.",
-             f"The difference between twice today's ads and today's will be smaller than between the campaign and "
-             f"public-service ads, so the test will need more than the {users(n10['0.5'])} users (50/50) that a "
-             f"{pct(ses['rel'], 0)} lift needs; heavy users may tire of more ads."),
+             "The marginal lift of extra impressions may be smaller than the ad-vs-PSA lift. Size this test on a "
+             "pre-agreed smallest marginal lift worth paying for; the "
+             f"{kn(n10['0.5'])} users of the ad-vs-PSA design is a benchmark, not this test's sample size. "
+             "Heavy users may tire of more ads."),
             ("R3", "Media buyer",
              "Don't re-plan spend by day or hour. If timing matters, run a planned test that randomly assigns the "
              "delivery schedule (weekday and time slot, e.g. Tuesday vs Thursday delivery).",
@@ -1947,7 +1960,9 @@ of D7. The interactive charts are embedded with plotly.js, so the file works off
              f"if the gate's position matters commercially.",
              f"Avoids a change with no sign of a retention benefit. The part of the day-7 gap the gate could explain "
              f"is about {p100(abs(eff), 1)} points per install (about {per10k(eff)} fewer day-7 players per 10,000 "
-             f"installs, possibly none). Level 40 does let players who reach level {GATE_LEVEL} play a little more.",
+             f"installs, possibly none). Among players with {GATE_LEVEL}+ rounds (who could have reached level "
+             f"{GATE_LEVEL}), gate_40 players played a little more (descriptive). Assignment is uncertified and the "
+             "group is defined by rounds played, so it does not show that gate_40 causes more play.",
              f"Any re-test: agree the smallest day-7 change worth acting on in advance (we suggest "
              f"{p100(rt['smallest_d7_change_per_install'], 1)} points per install, about "
              f"{pct(rt['smallest_d7_change_per_install'] / rt['baseline_d7_install'], 1)} of today's "
@@ -1961,9 +1976,10 @@ of D7. The interactive charts are embedded with plotly.js, so the file works off
             ("R6", "Onboarding PM (with CRM)",
              "Test a Day-1 comeback message for new players who play little on their first day, with day-7 retention "
              "deciding.",
-             f"Targets the biggest drop: {pct(1 - o['retention_1'])} of new players don't come back on Day 1. At most "
-             f"about {_plain(self.d1_ceiling, 2)} points of day-7 retention for every 1 point of installs brought back "
-             "on Day 1 (a ceiling, not a forecast).",
+             f"Targets the biggest drop: {pct(1 - o['retention_1'])} of new players don't come back on Day 1. "
+             "Illustrative scenario, not a forecast or an upper bound: shifting 1 pp of installs from the "
+             f"non-returners' {pct(self.d7_no)} D7 to the Day-1 returners' {pct(self.d7_yes)} would add about "
+             f"{_plain(self.d1_scenario, 2)} pp of D7; R6's real impact must be measured.",
              f"Day-7 retention among the targeted players in a randomized test (Day 1 as a secondary check); about "
              f"{users(sizing['players_needed_5050'])} target players (about {users(sizing['installs_needed_5050'])} "
              f"installs) to detect {_signed(sizing['target_lift_abs'] * 100, 1)} points on their "
@@ -1982,14 +1998,14 @@ Full analysis: [report.html](report.html) (opens in any browser, works offline).
 
 ## Bottom line
 
-**Keep the ad campaign running at today's budget, keep a small group of users as an always-on comparison, and test more ads per person before doubling the budget.** The campaign clearly brought in extra conversions, but this test never tried a higher budget, so it can't tell us whether more spend would pay off. **Keep the game's first gate at level {GATE_LEVEL}**: the test of level 40 showed no sign of a retention benefit, and a setup problem means we can't yet say whether it does any harm. **Focus retention work on bringing new players back the day after they install**, which is where most of them are lost.
+**Keep the ad campaign running at today's budget, keep a small group of users as an always-on comparison, and test more ads per person before doubling the budget.** The campaign clearly brought in extra conversions, but this test never tried a higher budget, so it can't tell us whether more spend would pay off. **Keep the game's first gate at level {GATE_LEVEL}**: the test of level 40 showed no sign of a retention benefit, and the group-size warning means we can't yet say whether it does any harm. **Focus retention work on bringing new players back the day after they install**, which is where most of them are lost.
 
 ## What we found
 
 1. **The campaign worked.** {pct(t['rate_t'], 2)} of people who saw the ads converted, vs {pct(t['rate_c'], 2)} of a similar group shown a public-service ad instead: {p100(t['abs_lift'])} more conversions per 100 people ({pp(t['abs_lift'], sign=True)}, or {spct(t['rel_lift'])}). We're {c} confident the true increase is between {p100(t['abs_ci_low'])} and {p100(t['abs_ci_high'])} per 100 people. That is roughly {approx(inc['point'], 100)} extra conversions (likely {approx(inc['ci_low'], 100)} to {approx(inc['ci_high'], 100)}) from {bz['impressions_ad_group'] / 1e6:.1f} million ad impressions. Only about {pct(share_inc, 0)} of the ad group's conversions were extra; the rest would have happened anyway. Crediting the campaign with every conversion from people who saw an ad (last-touch) would overstate it about {bz['last_touch_overstatement_x']:.1f} times (likely {self.lt[0]:.1f} to {self.lt[1]:.1f} times).
 2. **Whether doubling the budget pays off is still unknown.** If a conversion is worth {usd(self.value, 0)} (a placeholder; there is no revenue data), the campaign pays for itself as long as 1,000 ad impressions cost less than about {usd(be['point'])} (likely {usd(be['ci_low'])} to {usd(be['ci_high'])}). The {pct(con['share_users_le_20_ads'], 0)} of users who saw {LOW_EXPOSURE_MAX} ads or fewer show no lift we could measure (the {c} range runs from {ci_pp(le20['abs_ci_low'], le20['abs_ci_high'], sign=True)}). Almost all the extra conversions ({pct(con['share_incremental_conversions_36_200'], 0)}, counted bucket by bucket) came from the {pct(con['share_ad_users_36_200'], 0)} of ad viewers who saw {heavy} ads. But the people who see the most ads are also the most active and convert more anyway, so this shows where the effect sits, not what extra spend would buy. Only a proper test can answer that. Moving spend to particular days or hours isn't supported either: the one weekday pattern we found reflects users' habits, not a time slot we can buy.
 3. **New players of the game leave early, and the least engaged leave first.** These numbers come from our mobile game (Cookie Cats), the company's other product, so the sizes will not carry over one-for-one to the app. {pct(1 - o['retention_1'])} of new players don't come back the day after installing, and only {pct(o['retention_7'])} play on the seventh day. Almost half ({pct(early['share_of_installs'], 0)}) play fewer than {self.low_cut} rounds in their first two weeks, and only {pct(early['retention_7'])} of them come back on day 7. Players who return on Day 1 are {self.d7_yes / self.d7_no:.1f} times as likely to come back on day 7 ({pct(self.d7_yes)} vs {pct(self.d7_no)}). This shows who leaves, not why.
-4. **Moving the first gate to level 40 shows no sign of a retention benefit; whether it does harm is unclear.** The straightforward comparison shows a lower day-7 return rate with the gate at level 40: {pct(g7['rate_t'])} vs {pct(g7['rate_c'])}. But the two groups weren't split evenly: the level-40 group got about {num(self.excess_clean)} extra installs, and the surplus sits among people who played fewer than 15 rounds; even players who played too few rounds to get past the first gate came back slightly less often in that group. About {approx(self.not_gate_share * 100, 10)}% of the gap sits where the gate cannot act. The part the gate itself could explain is about {p100(abs(eff), 1)} percentage points per install (about {per10k(eff)} fewer day-7 players per 10,000 installs), and we're {c} confident it lies between a {p100(abs(eff_ci[0]))}-point drop and a {p100(abs(eff_ci[1]))}-point gain, so it may be zero; even that part may not be the gate. Players who got far enough to meet the gate did play a little more with it at level 40 (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds).
+4. **Moving the first gate to level 40 shows no sign of a retention benefit; whether it does harm is unclear.** The straightforward comparison shows a lower day-7 return rate with the gate at level 40: {pct(g7['rate_t'])} vs {pct(g7['rate_c'])}. But the two groups weren't split evenly: the level-40 group got about {num(self.excess_clean)} extra installs, and the surplus sits among people who played fewer than 15 rounds; even players who played too few rounds to get past the first gate came back slightly less often in that group. About {approx(self.not_gate_share * 100, 10)}% of the gap sits where the gate cannot act. The part the gate itself could explain is about {p100(abs(eff), 1)} percentage points per install (about {per10k(eff)} fewer day-7 players per 10,000 installs), and we're {c} confident it lies between a {p100(abs(eff_ci[0]))}-point drop and a {p100(abs(eff_ci[1]))}-point gain, so it may be zero; even that part may not be the gate. Among players with {GATE_LEVEL}+ rounds (who could have reached level {GATE_LEVEL}), gate_40 players played a little more (median {num(rr['median_t'])} vs {num(rr['median_c'])} rounds; descriptive). Assignment is uncertified and the group is defined by rounds played, so it does not show that gate_40 causes more play.
 
 ## What we recommend
 

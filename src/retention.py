@@ -31,11 +31,10 @@ def retention_rates(df: pd.DataFrame, by: str | list[str] | None = None, alpha: 
 
 
 def funnel(df: pd.DataFrame) -> pd.DataFrame:
-    """Install -> played >=1 round -> returned Day 1 -> retained Day 7 (and returned Day 1)."""
+    """Nested stages: installed -> returned Day 1 -> returned Day 1 and Day 7."""
     n = len(df)
     steps = [
         ("Installed", n),
-        ("Played at least 1 round", int((df["sum_gamerounds"] > 0).sum())),
         ("Returned on Day 1", int(df["retention_1"].sum())),
         ("Returned on Day 1 and Day 7", int((df["retention_1"] & df["retention_7"]).sum())),
     ]

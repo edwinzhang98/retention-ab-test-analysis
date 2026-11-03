@@ -145,7 +145,7 @@ These are the same file versions others have analysed, and the loading step does
 | # | Question or action | Owner | Why | Status |
 |---|---|---|---|---|
 | 1 | Find the source of the gate sample-ratio mismatch: assignment and install logs by date, platform and app version, starting with the low-engagement installs (fewer than 15 rounds), where gate_40's net excess of 762 sits | Game PM (Eng + Analytics fix assignment) | Checks EXP-4 to EXP-6; blocks certification of the gate readout (assumption C5, R5) | Open |
-| 2 | Get the ad test's allocation config from the experimentation platform and write the intended split into the brief | Growth PM + Eng | Check EXP-1 passes by construction (most likely a fixed quota), so it can't detect anything (assumption A1) | Open |
+| 2 | Get the ad test's allocation config from the experimentation platform and write the intended split into the test plan | Growth PM + Eng | Check EXP-1 passes by construction (most likely a fixed quota), so it can't detect anything (assumption A1) | Open |
 | 3 | What counts as a conversion, and over what attribution window? | Marketing data owner | Metric definitions (M1; `docs/02_metric_definitions.md`; assumptions A5, A6) | Open |
 | 4 | Timezone of `most ads hour` | Marketing data owner | Any delivery-schedule test (R3) depends on it (assumption A11) | Open |
 | 5 | Does a "return" (`retention_1` / `retention_7`) require a finished round? 87 zero-round players are flagged as back on Day 1 (29 on Day 7) | Game data owner | Check CC-7; assumption C2 | Open |

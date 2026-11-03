@@ -2,9 +2,8 @@
 
 How it works
   1. The notebook is declared below as a list of markdown and code cells.
-  2. The code cells are executed in-process (charts and display() stubbed out) so that every
-     number quoted in the markdown can be computed; quoted numbers are written as placeholders
-     and filled from those values.
+  2. Quoted numbers are kept in one table (Q), substituted into the markdown, and re-checked
+     against results.json and the clean data by the appendix cell when the notebook runs.
   3. A final appendix cell re-checks every quoted number when the notebook runs and fails if
      any of them has drifted from reports/results.json or the clean data.
   4. The notebook is written with deterministic cell ids, so rebuilds give readable git diffs.
@@ -34,14 +33,14 @@ NB_TITLE = "02 · New-player retention"
 Q = {
     # retention
     "n_clean": "90,188",
+    "played_n": "86,194",
     "played": "95.6%",
     "d1": "44.5%",
     "no_d1_share": "55.5%",
-    "first_drop": "51 pp",
+    "first_drop": "55.5 pp",
     "d7": "18.6%",
     "d7_ci": "18.4–18.9%",
     "funnel_last": "14.6%",
-    "drop_install": "4.4 pp",
     "drop_d1d7": "29.9 pp",
     "low_share": "47%",
     "low_n": "42,326",
@@ -55,7 +54,7 @@ Q = {
     "d7_yes": "32.8%",
     "d7_no": "7.2%",
     "gap_d1_overall": "25.6 pp",
-    "ceiling": "0.26",
+    "scenario": "0.26",
     "within_min": "−2.7",
     "within_max": "+5.1",
     "gap_rounds": "70 pp",
@@ -200,10 +199,10 @@ CELLS = [
     md("""
     ## TL;DR
 
-    - **The biggest drop is between the first session and Day 1.** {{no_d1_share}} of installs don't come back on
-      Day 1, the largest absolute loss: {{played}} play at least one round, but only {{d1}} return on Day 1, a
-      {{first_drop}} drop in share of installs. {{d7}} play on Day 7 (95% CI {{d7_ci}}), and {{funnel_last}} on both
-      Day 1 and Day 7.
+    - **{{no_d1_share}} of installs don't return on Day 1: the biggest drop.** A further {{drop_d1d7}} of installs
+      return on Day 1 but not on Day 7 ({{funnel_last}} return on both). {{d1}} return on Day 1 and {{d7}} play on
+      Day 7 (95% CI {{d7_ci}}). {{played}} of installs ({{played_n}} players) play at least one round at some point
+      in their first 14 days (rounds are 14-day totals, so this is not a first-session measure).
     - **Shallow players leave first.** Players with fewer than 15 rounds in their first 14 days are {{low_share}} of
       installs, and only {{low_d7}} of them are back on Day 7 (at most {{low_d7_max}} in any single rounds bucket),
       against {{d7_100}} of players with 100+ rounds. They make up {{low_lost_share}} of everyone not back on Day 7.
@@ -214,8 +213,9 @@ CELLS = [
       cause, so a Day-1 nudge has to be judged on D7.
     - **Engagement depth is the dimension that separates players.** It splits D7 retention by {{gap_rounds}} (partly
       by construction) and Day-1 status by {{gap_d1}}. The two gate versions differ by {{gap_version}} raw, of which
-      only about {{could_be_gate}} could be the gate (not certified): a minor lever next to engagement.
-    - **Recommendation R6: focus retention work on first session → Day 1, and test it.** The Onboarding PM (with CRM)
+      only about {{could_be_gate}} could be the gate (not certified). Engagement separates retention far more than
+      the gate version does; this compares associations and does not rank what changing each would achieve.
+    - **Recommendation R6: focus retention work on the Day-1 return, and test it.** The Onboarding PM (with CRM)
       runs a randomized Day-1 re-engagement test for new players who play little on their first day, with D7 as the
       primary metric. Detecting +0.5 pp of D7 on their {{low_d7}} base (a placeholder target) needs about
       {{n_target_05}} target players (≈{{installs_05}} installs) at 50/50.
@@ -264,7 +264,7 @@ CELLS = [
 
     - **Analysis question (Q4):** among new players, how do Day-1 and Day-7 retention differ by engagement depth (rounds
       played), by whether the player came back on Day 1, and by experiment version? Where is the largest drop?
-    - **Decision it informs:** which new-player segment, and which moment (first session, Day 1, later), onboarding work
+    - **Decision it informs:** which new-player segment, and which return day (Day 1 or later), onboarding work
       should target first.
     - **Decision owner:** Growth PM with the Game PM and the Onboarding PM.
     - **What would change the answer:** if retention were flat across segments, or the at-risk segment were small,
@@ -390,8 +390,8 @@ CELLS = [
 
     | Dimension | Segments | Business meaning | Who can act |
     |---|---|---|---|
-    | Engagement depth: rounds played in the first 14 days | 0 · 1–4 · 5–14 · 15–29 · 30–39 · 40–99 · 100+ | 0 = installed, never played (store page or first-load problem); 1–4 = bounced in the first session; 5–14 = tried it, did not stick; 15–29 = engaged but cannot yet have got past the level-30 gate; 30–39 = could have got past gate 30 but not gate 40; 40–99 = could be past both gate positions; 100+ = core players | Onboarding, level design |
-    | Day-1 return | Returned on Day 1 · did not | The first re-engagement moment, reachable with a better first session or a Day-1 reminder or reward | Onboarding PM, CRM |
+    | Engagement depth: rounds played in the first 14 days | 0 · 1–4 · 5–14 · 15–29 · 30–39 · 40–99 · 100+ | 0 = no recorded rounds in 14 days; 1–4 = barely started in 14 days; 5–14 = tried it, did not stick; 15–29 = engaged but cannot yet have got past level 30, up to which the two versions are identical; 30–39 = could have got past gate 30 but not gate 40; 40–99 = could be past both gate positions; 100+ = core players | Onboarding, level design |
+    | Day-1 return | Returned on Day 1 · did not | The first re-engagement moment, reachable with a better first-day experience or a Day-1 reminder or reward | Onboarding PM, CRM |
     | Version | gate_30 · gate_40 | The experiment arm: where the first progression gate sits, a lever the product controls. The arms are unbalanced (sample-ratio warning), so here it is a descriptive segment only | Game PM |
 
     Rounds are not levels. A player can replay a level, so 30 rounds is necessary but not sufficient to get past
@@ -430,10 +430,9 @@ CELLS = [
     }).set_index("Step")
     """),
     md("""
-    **Conclusion:** {{no_d1_share}} of installs don't come back on Day 1. The step from the first session to Day 1
-    loses {{first_drop}} of installs, the largest absolute loss and more than the other two steps combined
-    ({{drop_install}} + {{drop_d1d7}}), so the first session and the next-day return are where most new players are
-    lost.
+    **Conclusion:** {{no_d1_share}} of installs don't return on Day 1: the biggest drop ({{first_drop}} of installs).
+    A further {{drop_d1d7}} of installs return on Day 1 but not on Day 7 ({{funnel_last}} return on both).
+    The next-day return is the focus for retention work.
     """),
     md("""
     ### 4.2 Who leaves first? Retention by engagement depth
@@ -694,16 +693,16 @@ CELLS = [
     These match the project-wide decision list (R1–R6 in `docs/readout.md` and dashboard page 7). R6 comes from this
     notebook; R5 is informed by it.
 
-    **R6 · Focus retention work on first session → Day 1**
+    **R6 · Focus retention work on the Day-1 return**
     - **Owner:** Onboarding PM (with CRM).
     - **What:** a randomized Day-1 re-engagement test for new players who play little on their first day, with D7 as
       the primary metric: for example a simpler first-session flow, or a Day-1 reminder or reward. Target with
       first-day play (such as rounds played on the install day), because the 14-day count used here is not known on
       Day 0.
     - **Expected impact:** it targets the biggest drop: {{no_d1_share}} of installs don't return on Day 1, and
-      {{low_share}} play fewer than 15 rounds, of whom only {{low_d7}} play on Day 7. Ceiling, not a forecast: each 1 pp
-      of installs moved from "no Day-1 return" to "returned" is worth at most ≈{{ceiling}} pp of D7 ({{d7_yes}} vs
-      {{d7_no}}), if they then behaved like today's Day-1 returners.
+      {{low_share}} play fewer than 15 rounds in 14 days, of whom only {{low_d7}} play on Day 7. Illustrative scenario,
+      not a forecast or an upper bound: shifting 1 pp of installs from the non-returners' {{d7_no}} D7 to the Day-1
+      returners' {{d7_yes}} would add about {{scenario}} pp of D7; R6's real impact must be measured.
     - **How we'll measure:** D7 among the targeted players against a randomized holdout (primary); D1 (secondary).
       D1 is not the primary metric because section 4.7 suggests D1 can move without D7 following. Guardrails:
       uninstall rate and notification opt-out rate. Sizing: +0.5 pp of D7 on the {{low_d7}} base (a placeholder
@@ -719,8 +718,10 @@ CELLS = [
       Re-test only if the gate position matters commercially. The gate readout is not certified.
     - **Expected impact:** avoids a change with no sign of a retention benefit. The part of the D7 gap the gate could
       explain is ≈{{dec_reach_1dp}} pp per install (95% CI {{dec_ci}}; ≈{{per10k}} fewer Day-7 players per 10,000
-      installs), and even that may not be the gate. gate_40 does let players who reach level 30 play a little more
-      (median {{med_t}} vs {{med_c}} rounds), so if the Game PM values that, a clean re-test is the way to decide.
+      installs), and even that may not be the gate. Among players with 30+ rounds (who could have reached level 30),
+      gate_40 players played a little more (descriptive)
+      (median {{med_t}} vs {{med_c}} rounds). Assignment is uncertified and the group is defined by rounds played,
+      so it does not show that gate_40 causes more play. If the Game PM values that, a clean re-test is the way to decide.
     - **How we'll measure (any re-test):** pre-register a {{sesoi}} D7 change per install as the smallest change worth
       acting on (a placeholder to agree with the Game PM, ≈{{sesoi_rel}} of gate_30's {{g30_d7_1dp}}). With the primary
       analysis among players who reach level 30 (30+ rounds here; who gets there is settled before the gate, so the
@@ -758,7 +759,7 @@ CELLS = [
        {{dec_never}} + players who could meet the gate {{dec_reach}} pp per install (95% CI {{dec_ci}}); the split is
        exact. About {{share_not_gate}} of the naive gap (player mix plus players who never met a gate) sits where the
        gate cannot act. The {{dec_reach}} pp is the part the gate could explain, not an estimate of its effect: players
-       with 15–29 rounds, who never met a gate, show a similar D7 gap ({{b1529_d7}} pp, 95% CI {{b1529_ci}}) to players
+       with 15–29 rounds, almost none of whom can have met a gate, show a similar D7 gap ({{b1529_d7}} pp, 95% CI {{b1529_ci}}) to players
        with 30+ rounds ({{b30_d7}} pp, 95% CI {{b30_ci}}), so even this part may not be the gate. Per 10,000 installs it is ≈{{per10k}} fewer Day-7
        players (95% CI {{per10k_lo}} fewer to {{per10k_hi}} more).
     6. **Best case for gate_40.** Even if every one of the ≈{{excess_clean}} extra installs never returned, the D7 gap
@@ -769,9 +770,10 @@ CELLS = [
        change Day 1 only for players who reached level 30 on the install day, and the data cannot single them out.
     8. **Engagement guardrail.** The all-player mean ({{rounds_all}} rounds, 95% CI {{rounds_all_ci}}) carries the same
        imbalance, so it is not a clean guardrail. Among players with 30+ rounds, gate_40 players play a little more:
-       median {{med_t}} vs {{med_c}} rounds (Mann-Whitney p = {{med_p}}), and {{past40_t}} vs {{past40_c}} go past 40
-       rounds ({{past40_diff}}, 95% CI {{past40_ci}}); the mean difference ({{mean30_diff}} rounds, 95% CI
-       {{mean30_ci}}) is too noisy to read. So the later gate does buy some extra play, but these players' D7 is not
+       median {{med_t}} vs {{med_c}} rounds (Mann-Whitney p = {{med_p}}), and {{past40_t}} vs {{past40_c}} played at least 40
+       rounds ({{past40_diff}}, 95% CI {{past40_ci}}). It is a descriptive difference: assignment is uncertified and
+       the group is defined by rounds played, so it does not show that gate_40 causes more play. The mean difference
+       ({{mean30_diff}} rounds, 95% CI {{mean30_ci}}) is too noisy to read. These players' D7 is not
        higher ({{b30_d7}} pp, 95% CI {{b30_ci}}): no sign of a retention benefit.
     9. **Why splitting by rounds is allowed here, when splitting the ad test by ads seen is not.** Ads can change how
        long a user stays from the first impression, so exposure can be caused by the treatment. Below level 30 both
@@ -832,6 +834,11 @@ CELLS = [
     """),
     code("""
     f = pd.DataFrame(ck["funnel"]).set_index("step")["share_of_installs"]
+    played_14d = players["sum_gamerounds"] > 0
+    assert ck["overall"]["played_any_round_14d"] == int(played_14d.sum())
+    assert np.isclose(ck["overall"]["share_played_any_round_14d"], played_14d.mean(), atol=5e-9, rtol=0)
+    expected_funnel = R.funnel(players)
+    assert pd.DataFrame(ck["funnel"])[["step", "players"]].equals(expected_funnel[["step", "players"]])
     gap_dim = pd.DataFrame(ck["gap_by_dimension"]).set_index("column")["gap_pp"]
     rb = R.retention_rates(players, "rounds_bucket").set_index("rounds_bucket")
     d1s = R.retention_rates(players, "d1_status").set_index("d1_status")
@@ -866,15 +873,15 @@ CELLS = [
 
     quoted = [
         ("Players after cleaning", "{{n_clean}}", f"{len(players):,}"),
-        ("Played at least 1 round", "{{played}}", pct(f["Played at least 1 round"])),
+        ("Played at least one round in 14 days", "{{played}}", pct((players["sum_gamerounds"] > 0).mean())),
+        ("Players with at least one round in 14 days", "{{played_n}}", f"{(players['sum_gamerounds'] > 0).sum():,}"),
         ("D1 retention", "{{d1}}", pct(players["retention_1"].mean())),
         ("Did not return on Day 1", "{{no_d1_share}}", pct(1 - players["retention_1"].mean())),
-        ("Drop, first session to Day 1", "{{first_drop}}",
-         f"{(f['Played at least 1 round'] - f['Returned on Day 1']) * 100:.0f} pp"),
+        ("Drop, install to Day 1", "{{first_drop}}",
+         f"{(f['Installed'] - f['Returned on Day 1']) * 100:.1f} pp"),
         ("D7 retention", "{{d7}}", pct(players["retention_7"].mean())),
         ("D7 retention, 95% CI", "{{d7_ci}}", f"{d7_lo * 100:.1f}–{d7_hi * 100:.1f}%"),
         ("Returned on Day 1 and Day 7", "{{funnel_last}}", pct(f["Returned on Day 1 and Day 7"])),
-        ("Drop, install to first round", "{{drop_install}}", f"{(1 - f['Played at least 1 round']) * 100:.1f} pp"),
         ("Drop, Day 1 to Day 1 and Day 7", "{{drop_d1d7}}",
          f"{(f['Returned on Day 1'] - f['Returned on Day 1 and Day 7']) * 100:.1f} pp"),
         ("Share of installs with < 15 rounds", "{{low_share}}", pct(target.mean(), 0)),
@@ -889,7 +896,7 @@ CELLS = [
         ("D7, returned on Day 1", "{{d7_yes}}", pct(d7_back)),
         ("D7, did not return on Day 1", "{{d7_no}}", pct(d7_gone)),
         ("D7 gap by Day-1 status, overall", "{{gap_d1_overall}}", f"{(d7_back - d7_gone) * 100:.1f} pp"),
-        ("R6 ceiling: pp of D7 per 1 pp of installs moved to a Day-1 return", "{{ceiling}}", f"{d7_back - d7_gone:.2f}"),
+        ("R6 illustrative scenario: pp of D7 per 1 pp of installs shifted between observed groups", "{{scenario}}", f"{d7_back - d7_gone:.2f}"),
         ("Smallest within-bucket Day-1 gap", "{{within_min}}", sgn(d1_gap.iloc[1:]["gap_pp"].min(), 1)),
         ("Largest within-bucket Day-1 gap", "{{within_max}}", sgn(d1_gap.iloc[1:]["gap_pp"].max(), 1)),
         ("D7 gap, engagement depth", "{{gap_rounds}}", f"{gap_dim['rounds_bucket']:.0f} pp"),
@@ -989,10 +996,10 @@ CELLS = [
         ("Gate: rounds among 30+ players, median gate_40", "{{med_t}}", f"{ra['median_t']:.0f}"),
         ("Gate: rounds among 30+ players, median gate_30", "{{med_c}}", f"{ra['median_c']:.0f}"),
         ("Gate: rounds among 30+ players, Mann-Whitney p", "{{med_p}}", f"{ra['mannwhitney_p']:.4f}"),
-        ("Gate: past 40 rounds among 30+ players, gate_40", "{{past40_t}}", pct(past40["rate_t"])),
-        ("Gate: past 40 rounds among 30+ players, gate_30", "{{past40_c}}", pct(past40["rate_c"])),
-        ("Gate: past 40 rounds, difference", "{{past40_diff}}", f"{sgn(past40['abs_lift'] * 100, 1)} pp"),
-        ("Gate: past 40 rounds, 95% CI", "{{past40_ci}}", ci_pp(past40["abs_ci_low"], past40["abs_ci_high"], 1)),
+        ("Gate: at least 40 rounds among 30+ players, gate_40", "{{past40_t}}", pct(past40["rate_t"])),
+        ("Gate: at least 40 rounds among 30+ players, gate_30", "{{past40_c}}", pct(past40["rate_c"])),
+        ("Gate: at least 40 rounds, difference", "{{past40_diff}}", f"{sgn(past40['abs_lift'] * 100, 1)} pp"),
+        ("Gate: at least 40 rounds, 95% CI", "{{past40_ci}}", ci_pp(past40["abs_ci_low"], past40["abs_ci_high"], 1)),
         ("Gate: rounds among 30+ players, mean difference", "{{mean30_diff}}", sgn(ra["mean_diff"], 1)),
         ("Gate: rounds among 30+ players, mean difference 95% CI", "{{mean30_ci}}",
          " to ".join(sgn(x, 1) for x in ra["mean_diff_boot_ci"])),

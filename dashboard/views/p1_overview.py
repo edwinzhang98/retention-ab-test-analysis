@@ -40,7 +40,6 @@ split = f"{plan * 100:.0f}/{(1 - plan) * 100:.0f}"
 n_users = t["n_t"] + t["n_c"]
 psa_share = t["n_c"] / n_users
 steps = [s["share_of_installs"] for s in ck["funnel"]]
-biggest_drop = max(a - b for a, b in zip(steps, steps[1:]))  # first session -> Day 1
 
 
 def page_link(page: str, label: str) -> None:
@@ -152,7 +151,7 @@ r[3].metric(
     help=f"Not certified: sample-ratio WARNING on raw assignment counts ({gsrm['n_t']:,} vs {gsrm['n_c']:,}, "
          f"{excess_raw} more in gate_40; {p_text(gsrm['p_value'])}). This is the gate_40 − gate_30 D7 difference "
          "among players with 30+ rounds (who could have reached level 30), spread over all installs: the part of "
-         "the gap the gate could explain, not an estimate of its effect. Players with 15–29 rounds, who never met a "
+         "the gap the gate could explain, not an estimate of its effect. Players with 15–29 rounds, almost none of whom can have met a "
          f"gate, show a similar gap. The naive gap ({sgn_pp(dec['naive_diff'])}) also contains the player mix "
          f"({sgn_pp(dec['composition'])}) and players who never met a gate ({sgn_pp(dec['within_never_reached_30'])}); "
          "neither can be the gate.")
@@ -226,8 +225,9 @@ with row2[0].container(border=True, height="stretch"):
     by_d1 = {x["d1_status"]: x["retention_7"] for x in ck["by_d1_status"]}
     d7_yes, d7_no = by_d1["Returned Day 1"], by_d1["Did not return Day 1"]
     st.markdown(
-        f"**{(1 - ov['retention_1']) * 100:.1f}%** of installs don't come back on Day 1, the largest absolute loss "
-        f"({biggest_drop * 100:.0f} pp of installs). Players with < 15 rounds in 14 days are "
+        f"**{(1 - ov['retention_1']) * 100:.1f}%** of installs don't come back on Day 1, the biggest drop "
+        f"in the funnel. A further {(steps[1] - steps[2]) * 100:.1f} pp of installs "
+        f"return on Day 1 but not on Day 7 ({steps[2] * 100:.1f}% return on both). Players with < 15 rounds in 14 days are "
         f"**{early['share_of_installs'] * 100:.0f}%** of installs, and only **{early['retention_7'] * 100:.1f}%** of "
         f"them are back on Day 7 (≤ {early['max_bucket_retention_7'] * 100:.1f}% in any single bucket). Players who "
         f"return on Day 1 are **{d7_yes / d7_no:.1f}×** as likely to play on Day 7 ({fmt_pct(d7_yes, 1)} vs "
@@ -251,7 +251,11 @@ with row2[1].container(border=True, height="stretch"):
         f"of {net_lt15} among players with < 15 rounds. About {round(not_gate * 10) * 10:.0f}% of the naive gap sits "
         "where the gate cannot act; the part the gate could explain is "
         f"**{sgn_pp(gate_eff)} per install** ({ci_text(gate_ci[0], gate_ci[1], unit='')}), not an estimate of its "
-        "effect, and possibly zero. No sign of a retention benefit. Keeping gate_30 is the status quo, so the "
+        f"effect, and possibly zero. No sign of a retention benefit. Among players with 30+ rounds, gate_40 "
+        f"players played a little more (median {gate['rounds_among_reachers']['median_t']:.0f} vs "
+        f"{gate['rounds_among_reachers']['median_c']:.0f} rounds). This is descriptive: assignment is uncertified "
+        "and the group is defined by rounds played, so it does not show that gate_40 causes more play. "
+        "Keeping gate_30 is the status quo, so the "
         "decision does not need a certified result.")
     st.caption(f"R5: keep gate_30; fix assignment and logging first. Re-test only if the gate position matters "
                f"commercially, sized at a {retest['smallest_d7_change_per_install'] * 100:.1f} pp D7 change per "
@@ -299,8 +303,8 @@ how_to_read(f"""
 the page with the evidence. Every number comes from the same analysis run as the report.
 
 **The number cards.** The big number is the measured value. The grey line under it is the **95% confidence
-interval (CI)**: the range of true values that are consistent with the data. When the whole range sits on one side
-of zero, the effect is very unlikely to be zero. Hover the small question mark for the exact definition.
+interval (CI)** shows the effect sizes compatible with the data. If ads had no effect, a difference this large
+would be very unlikely. Hover the small question mark for the exact definition.
 
 **pp vs %.** Going from {fmt_pct(t['rate_c'])} to {fmt_pct(t['rate_t'])} is a gain of
 {t['abs_lift'] * 100:.2f} **percentage points (pp)**, which is also a {t['rel_lift'] * 100:.0f}% **relative**
@@ -317,7 +321,7 @@ one conversion is worth, which this data does not contain, so the value is an **
 top right. Compare the breakeven with the CPM we actually pay (Finance has it).
 
 **The gate card** shows the part of gate_40's D7 gap that the gate could explain, per install. It is not an estimate
-of the gate's effect: players with 15–29 rounds, who never met a gate, show a similar gap. The naive gap
+of the gate's effect: players with 15–29 rounds, almost none of whom can have met a gate, show a similar gap. The naive gap
 ({sgn_pp(dec['naive_diff'])}) is larger because about {round(not_gate * 10) * 10:.0f}% of it sits where the gate
 cannot act: the player mix and players who never met a gate. Page 6 shows the split.
 
@@ -328,7 +332,8 @@ precisely.
 **Common misreadings.**
 - "{t['rel_lift'] * 100:.0f}% lift" does not mean {t['rel_lift'] * 100:.0f}% of users converted. It is a relative
   change on a base rate of {fmt_pct(t['rate_c'])}.
-- "Statistically significant" means "unlikely to be zero", not "big" or "profitable".
+- If ads had no effect, a difference this large would be very unlikely; the confidence interval shows the effect
+  sizes compatible with the data. Statistical significance alone does not establish size or profitability.
 - The experiment shows the campaign worked at its *current* budget. It says nothing direct about a doubled budget.
 - Reading the naive {sgn_pp(dec['naive_diff'])} D7 gap as the effect of the gate. The groups were unbalanced, and
   about {round(not_gate * 10) * 10:.0f}% of the gap sits where the gate cannot act.
