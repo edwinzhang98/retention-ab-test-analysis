@@ -4,9 +4,11 @@ Laid out like a standard experiment readout: hypothesis and design -> metrics
 -> result -> power -> business value -> risks -> decision.
 
 Headline numbers are read from reports/results.json. The controls recompute
-intervals, power and breakeven from the same counts with src/stats.py; the
-bootstrap interval reuses the cached draws (boot_ad_lift) and only re-takes
-percentiles when alpha changes.
+intervals, power, breakeven and the holdout cost from the same counts with
+src/stats.py; the bootstrap interval reuses the cached draws (boot_ad_lift)
+and only re-takes percentiles when alpha changes. Power is always evaluated at
+the smallest lift worth acting on (a design property), never at the observed
+effect.
 """
 from __future__ import annotations
 
@@ -21,8 +23,11 @@ RES = load_results()
 AD = RES["ad"]
 T = AD["test"]
 CFG = RES["config"]
+PW = AD["power"]
 BZ = AD["business"]
 INC = BZ["incremental_conversions"]
+HOLD = BZ["always_on_holdout_cost"]
+SRM = AD["srm"]
 IMPRESSIONS = int(BZ["impressions_ad_group"])
 CAT = load_catalog_takeaways()
 BOOT = load_cache("boot_ad_lift")
@@ -31,16 +36,21 @@ ALPHA0 = float(CFG["alpha"])
 POWER0 = float(CFG["power"])
 SHARE0 = float(CFG["intended_ad_share"])
 VALUE0 = float(CFG["value_per_conversion_usd"])
+SESOI0 = float(PW["smallest_lift_of_interest_rel"])   # smallest relative lift worth acting on
+HOLDOUT0 = float(HOLD["share"])
 N_TOTAL = int(T["n_t"] + T["n_c"])
 N_BOOT = len(BOOT)
 # exact rates from counts (results.json rounds rates to 6 decimals)
 P_T = T["conv_t"] / T["n_t"]
 P_C = T["conv_c"] / T["n_c"]
+SPLIT0 = f"{SHARE0 * 100:.0f}/{(1 - SHARE0) * 100:.0f}"
 
 ALPHAS = [0.10, 0.05, 0.01, 0.001]
 ALPHA_LABELS = {0.10: "0.10", 0.05: "0.05", 0.01: "0.01", 0.001: "0.001"}
 METHODS = {"newcombe": "Newcombe (score)", "wald": "Wald", "bootstrap": "Bootstrap percentile"}
+PW_ALPHAS = [0.10, 0.05, 0.01]
 POWERS = [0.70, 0.80, 0.90, 0.95]
+SUPERSCRIPT = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
 # ------------------------------------------------------------------ helpers
@@ -59,12 +69,34 @@ def ci_short(lo: float, hi: float) -> str:
 
 
 def p_text(p: float) -> str:
-    return "< 0.0001" if p < 1e-4 else f"{p:.4f}"
+    """Headline p-value: never prints 0."""
+    if p < 1e-4:
+        return "< 0.0001"
+    return f"{p:.4f}" if (p < 1e-3 or p > 0.99) else f"{p:.2g}"
 
 
-def md_usd(x: float, nd: int = 2) -> str:
-    """Dollar amount for st.markdown / st.metric, where a bare $ starts LaTeX."""
-    return f"\\${x:,.{nd}f}"
+def sci(x: float) -> str:
+    """1.71e-13 -> '1.7 × 10⁻¹³' (technical text only; headline text says p < 0.0001)."""
+    mant, exp = f"{x:.1e}".split("e")
+    return f"{mant} × 10{str(int(exp)).translate(SUPERSCRIPT)}"
+
+
+def usd(x: float, nd: int = 2) -> str:
+    """Money as 'USD 15.49': a bare dollar sign starts LaTeX in Streamlit markdown."""
+    return f"USD {x:,.{nd}f}"
+
+
+def usd_input(x: float) -> str:
+    """An entered amount: 'USD 50' for whole numbers, 'USD 52.50' otherwise."""
+    return usd(x, 0 if float(x).is_integer() else 2)
+
+
+def usd_k(x: float, nd: int = 0) -> str:
+    return f"USD {x / 1e3:,.{nd}f}K"
+
+
+def fmt_power(p: float) -> str:
+    return "≈100%" if p >= 0.995 else f"{p:.0%}"
 
 
 def kpi(col, label: str, value: str, note: str | None = None, help: str | None = None) -> None:
@@ -89,27 +121,44 @@ def lift_intervals(alpha: float) -> pd.DataFrame:
         index=list(METHODS))
 
 
-@st.cache_data(show_spinner=False)
-def mde_figure(share: float, alpha: float, power: float):
-    return F.fig_mde_by_split(P_C, N_TOTAL, share, T["abs_lift"], alpha, power,
-                              "Minimum detectable lift by treatment share (pp)", height=380)
+def design(share: float) -> tuple[int, int]:
+    """(ad users, PSA users) for a split of the same total. The as-run split uses the real
+    arm sizes and 50/50 halves the total, as in results.json."""
+    if abs(share - SHARE0) < 1e-9:
+        return int(T["n_t"]), int(T["n_c"])
+    if abs(share - 0.5) < 1e-9:
+        return N_TOTAL // 2, N_TOTAL // 2
+    n_t = int(round(N_TOTAL * share))
+    return n_t, N_TOTAL - n_t
+
+
+def split_label(share: float) -> str:
+    return f"{share * 100:.0f}/{(1 - share) * 100:.0f}"
 
 
 @st.cache_data(show_spinner=False)
-def power_figure(n_t: int, n_c: int, alpha: float, power: float):
-    return F.fig_power_curve(P_C, n_t, n_c, alpha, T["abs_lift"], "Power to detect a true lift (%)",
-                             target_power=power, height=380)
+def design_numbers(share: float, alpha: float, power: float, rel: float) -> dict:
+    """MDE, power at the smallest lift worth acting on, and users needed for it, for one split."""
+    n_t, n_c = design(share)
+    sesoi = rel * P_C
+    return {"n_t": n_t, "n_c": n_c,
+            "mde": S.mde(P_C, n_t, n_c, alpha, power)["mde_abs"],
+            "power_at_sesoi": S.achieved_power(P_C, P_C + sesoi, n_t, n_c, alpha),
+            "users_needed": S.required_total_n(P_C, sesoi, share, alpha, power)}
 
 
-def relabel_percentiles(fig, alpha: float):
-    """fig_bootstrap labels its interval lines '2.5%' / '97.5%'; match them to the chosen alpha."""
-    lo_lab, hi_lab = f"{alpha / 2 * 100:g}%:", f"{(1 - alpha / 2) * 100:g}%:"
-    for ann in fig.layout.annotations:
-        if ann.text and ann.text.startswith("2.5%:"):
-            ann.text = ann.text.replace("2.5%:", lo_lab, 1)
-        elif ann.text and ann.text.startswith("97.5%:"):
-            ann.text = ann.text.replace("97.5%:", hi_lab, 1)
+@st.cache_data(show_spinner=False)
+def mde_figure(share: float, alpha: float, power: float, sesoi: float):
+    fig = F.fig_mde_by_split(P_C, N_TOTAL, share, sesoi, alpha, power,
+                             "Minimum detectable lift vs. share of users in treatment (pp)")
+    if abs(share - 0.5) < 1e-9:   # the selected split is the 50/50 reference: keep one label, not two
+        fig.update_traces(mode="markers", selector=dict(name="Selected split"))
     return fig
+
+
+@st.cache_data(show_spinner=False)
+def power_figure(n_t: int, n_c: int, alpha: float, power: float, sesoi: float, title: str, max_lift_pp: float):
+    return F.fig_power_curve(P_C, n_t, n_c, alpha, sesoi, title, target_power=power, max_lift_pp=max_lift_pp)
 
 
 def payback_verdict(cpm: float, be: dict) -> tuple[str, str, str]:
@@ -128,12 +177,17 @@ def payback_verdict(cpm: float, be: dict) -> tuple[str, str, str]:
 page_header("Experiment Readout: Ad vs PSA",
             "Did ads increase conversion, by how much, and is it worth the money?")
 
+share_inc = BZ["share_of_ad_conversions_incremental"]
+share_inc_ci = BZ["share_of_ad_conversions_incremental_ci"]
+overstate = BZ["last_touch_overstatement_x"]
 with st.container(border=True):
     st.markdown(
         f"**Readout in one line.** Ads lifted conversion from {fmt_pct(T['rate_c'])} (PSA) to "
         f"{fmt_pct(T['rate_t'])}: {fmt_pp(T['abs_lift'])} (95% CI {pp_range(T['abs_ci_low'], T['abs_ci_high'])}), "
-        f"{T['rel_lift']:+.0%} relative, ≈{INC['point']:,.0f} incremental conversions. "
-        "**Keep the campaign at its current budget; test a bigger budget before doubling it.**")
+        f"{T['rel_lift']:+.0%} relative, ≈{INC['point']:,.0f} incremental conversions. That is only "
+        f"{share_inc:.0%} of the ad arm's conversions, so last-touch attribution would overstate the campaign "
+        f"{overstate:.1f}×. **Keep the campaign with an always-on {HOLDOUT0:.0%} holdout; test a bigger budget "
+        "before doubling it.**")
 
 # ---------------------------------------------------------------- 1. hypothesis & design
 st.subheader("1 · Hypothesis and design")
@@ -145,7 +199,9 @@ with h1.container(border=True, height="stretch"):
         "increases the share of users who convert.\n\n"
         "- H₀: conversion rate (ad) = conversion rate (PSA)\n"
         f"- H₁: the rates differ (two-sided test, α = {ALPHA0:g})\n"
-        "- Decision rule: keep the campaign if the 95% CI for the lift excludes 0 **and** the sanity checks pass.")
+        "- Decision rule: keep the campaign if the 95% CI for the lift excludes 0 **and** the trust checks "
+        "(sample ratio, exposure parity) raise no red flag. Whether it pays back is a separate cost question "
+        "(section 5).")
 with h2.container(border=True, height="stretch"):
     st.markdown(
         "**Design and sample**\n\n"
@@ -160,24 +216,27 @@ with h2.container(border=True, height="stretch"):
 
 # ---------------------------------------------------------------- 2. metrics
 st.subheader("2 · Metrics")
-srm = AD["srm"]
-srm_status = srm.get("status") or ("FAIL" if srm["flag"] else "PASS")
 g_ad, g_psa = AD["groups"]["ad"], AD["groups"]["psa"]
+ks_d = AD["total_ads_ks"]["stat"]
 st.markdown(
     "| Role | Metric | Definition | Result |\n"
     "|---|---|---|---|\n"
-    f"| **Primary** | Conversion rate | Users with `converted = True` ÷ users assigned to the arm "
+    f"| **Primary** | Conversion rate | Users with `converted` = True ÷ users assigned to the arm "
     f"| Ad {fmt_pct(T['rate_t'])} vs PSA {fmt_pct(T['rate_c'])} |\n"
     f"| Secondary | Relative lift | Ad rate ÷ PSA rate − 1 "
     f"| {T['rel_lift']:+.0%} (95% CI {T['rel_ci_low']:+.0%} to {T['rel_ci_high']:+.0%}) |\n"
     f"| Secondary | Incremental conversions | Absolute lift × users in the ad arm "
     f"| ≈{INC['point']:,.0f} (95% CI {INC['ci_low']:,.0f} to {INC['ci_high']:,.0f}) |\n"
-    f"| Guardrail (trust) | Sample ratio (SRM) | Observed vs intended {SHARE0 * 100:.0f}/{(1 - SHARE0) * 100:.0f} split, "
-    f"chi-square test | p = {srm['p_value']:.4f}: {srm_status.lower()} (weak check, see risks) |\n"
-    f"| Guardrail (trust) | Exposure parity | Mean ads seen per user, ad vs PSA "
-    f"| {g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f}: pass |\n"
+    f"| Secondary | Share of ad-arm conversions caused by the ads | Incremental ÷ ad-arm conversions (= 1 − 1/RR) "
+    f"| {share_inc:.0%} (95% CI {share_inc_ci[0]:.0%} to {share_inc_ci[1]:.0%}) |\n"
+    f"| Trust check | Sample ratio (SRM) | Observed vs intended {SPLIT0} split, chi-square test "
+    f"| p = {p_text(SRM['p_value'])}, but uninformative: the ad arm is the nearest whole number to exactly "
+    f"{SHARE0:.0%}, so the test passes by construction (see risks) |\n"
+    f"| Trust check | Exposure parity | Ads seen per user, ad vs PSA: mean and distribution "
+    f"| Means {g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f}; shapes differ a little (KS D = {ks_d:.3f}): "
+    "exposure is an exploratory cut, never a covariate |\n"
     "| Guardrails we lack | Unsubscribe / hide-ad rate, complaint rate, cost per acquisition (CPA) "
-    "| Not in this dataset | Cannot be checked here; add them to the next test (R4) |")
+    "| Not in this dataset | Cannot be checked here; pre-register them in the next test (R4) |")
 
 # ---------------------------------------------------------------- 3. result
 st.subheader("3 · Result")
@@ -206,10 +265,11 @@ kpi(k2, "Absolute lift", fmt_pp(test.abs_lift),
 kpi(k3, "Relative lift", f"{test.rel_lift:+.0%}",
     f"{conf(alpha)} CI {sel['rel_low']:+.0%} to {sel['rel_high']:+.0%}",
     help="Analytic methods use a log-risk-ratio interval; the bootstrap uses percentiles of the resampled ratio.")
-kpi(k4, "p-value (z-test)", p_text(test.p_value), f"{n_le0:,} of {N_BOOT:,} draws ≤ 0",
-    help="Two-sided pooled two-proportion z-test. The note counts bootstrap resamples with a lift at or below zero.")
+kpi(k4, "p-value (z-test)", p_text(test.p_value), f"{n_le0:,} of {N_BOOT:,} resamples ≤ 0",
+    help=f"Two-sided pooled two-proportion z-test: p = {sci(test.p_value)}. The note counts bootstrap "
+         "resamples with a lift at or below zero.")
 
-g1, g2 = st.columns(2)
+g1, g2 = st.columns(2, gap="medium")
 with g1:
     arms = F.arm_table(T["conv_t"], T["n_t"], T["conv_c"], T["n_c"], alpha=alpha)
     show(F.fig_arm_rates(arms, f"Conversion rate by experiment arm (%, {conf(alpha)} CI)"), key="p4_arm_rates")
@@ -223,94 +283,109 @@ with g1:
                  f"{pp_range(sel['abs_low'], sel['abs_high'])}: {verdict}. The three interval methods agree "
                  f"within {spread * 100:.2f} pp.")
 with g2:
-    b_ci = (float(cis.loc["bootstrap", "abs_low"]), float(cis.loc["bootstrap", "abs_high"]))
-    fig_b = F.fig_bootstrap(BOOT["abs_lift"].to_numpy(), b_ci, T["abs_lift"],
-                            f"Bootstrap distribution of the lift (pp, {N_BOOT:,} resamples)", height=400)
-    fig_b.update_traces(nbinsx=60, selector=dict(type="histogram"))  # half-width chart: fewer, wider bins
-    fig_b.update_layout(bargap=0.04)  # the shared layout's bar gap makes a histogram look like a comb
-    show(relabel_percentiles(fig_b, alpha), key="p4_bootstrap")
-    if alpha == ALPHA0:
-        takeaway(CAT["ad_bootstrap"])
-    else:
-        tail = alpha / 2 * N_BOOT
-        note = (f" Each tail now rests on only {tail:g} draws, so treat the bootstrap bounds as approximate."
-                if tail < 50 else "")
-        takeaway(f"The middle {conf(alpha)} of the {N_BOOT:,} resampled lifts runs from {b_ci[0] * 100:.2f} to "
-                 f"{b_ci[1] * 100:.2f} pp, and {n_le0:,} resamples show a lift ≤ 0.{note}")
+    view = pd.DataFrame({
+        "Interval method": [METHODS[m] + (" ←" if m == method else "") for m in cis.index],
+        "Lower (pp)": cis["abs_low"].to_numpy() * 100,
+        "Upper (pp)": cis["abs_high"].to_numpy() * 100,
+        "Excludes 0": np.where((cis["abs_low"] > 0) | (cis["abs_high"] < 0), "Yes", "No"),
+    })
+    st.markdown(f"**All three interval methods at {conf(alpha)} confidence**")
+    st.dataframe(view, hide_index=True, width="stretch",
+                 column_config={c: st.column_config.NumberColumn(format="%+.3f") for c in ("Lower (pp)", "Upper (pp)")})
+    widths = (cis["abs_high"] - cis["abs_low"]) * 100
+    st.caption(f"← marks the method used in the cards above. Widths: {widths.min():.3f} to {widths.max():.3f} pp. "
+               "Newcombe (score) is the project default because it behaves well for small rates; the bootstrap "
+               f"re-uses {N_BOOT:,} cached resamples.")
 
-view = pd.DataFrame({
-    "Interval method": [METHODS[m] + ("  ← selected" if m == method else "") for m in cis.index],
-    "Lower (pp)": cis["abs_low"].to_numpy() * 100,
-    "Upper (pp)": cis["abs_high"].to_numpy() * 100,
-    "Width (pp)": (cis["abs_high"] - cis["abs_low"]).to_numpy() * 100,
-    "Excludes 0": np.where((cis["abs_low"] > 0) | (cis["abs_high"] < 0), "Yes", "No"),
-})
-st.markdown(f"**All three interval methods at {conf(alpha)} confidence**")
-st.dataframe(view, hide_index=True, width="stretch",
-             column_config={c: st.column_config.NumberColumn(format="%+.3f") for c in ("Lower (pp)", "Upper (pp)")}
-             | {"Width (pp)": st.column_config.NumberColumn(format="%.3f")})
+b_ci = (float(cis.loc["bootstrap", "abs_low"]), float(cis.loc["bootstrap", "abs_high"]))
+show(F.fig_bootstrap(BOOT["abs_lift"].to_numpy(), b_ci, T["abs_lift"],
+                     f"Bootstrap distribution of the ad lift (pp, {N_BOOT:,} resamples)", alpha=alpha),
+     key="p4_bootstrap")
+if alpha == ALPHA0:
+    takeaway(CAT["ad_bootstrap"])
+else:
+    tail = alpha / 2 * N_BOOT
+    note = (f" Each tail now rests on only {tail:g} draws, so treat the bootstrap bounds as approximate."
+            if tail < 50 else "")
+    takeaway(f"The middle {conf(alpha)} of the {N_BOOT:,} resampled lifts runs from {b_ci[0] * 100:.2f} to "
+             f"{b_ci[1] * 100:.2f} pp, and {n_le0:,} resamples show a lift ≤ 0.{note}")
 
 # ---------------------------------------------------------------- 4. power
 st.subheader("4 · Power: what could this test detect?")
-q1, q2, q3, q4 = st.columns([1.4, 1, 1.1, 1])
+st.caption("Power is a property of the design: the chance of detecting a true lift of a given size. It is judged "
+           "at the smallest lift worth acting on, never at the lift we happened to observe.")
+q1, q2, q3, q4 = st.columns([1.4, 1, 1.1, 1.2])
 share = q1.slider("Share of users in treatment (ad)", 50, 99, int(round(SHARE0 * 100)), step=1, format="%d%%",
                   key="p4_share", help=f"This test ran at {SHARE0:.0%}. Same total users, different split.") / 100
-PW_ALPHAS = [0.10, 0.05, 0.01]
 pw_alpha = q2.radio("α", PW_ALPHAS, index=PW_ALPHAS.index(ALPHA0) if ALPHA0 in PW_ALPHAS else 1,
                     format_func=lambda a: f"{a:.2f}", horizontal=True, key="p4_pw_alpha")
 power = q3.select_slider("Power (1 − β)", POWERS, value=POWER0 if POWER0 in POWERS else 0.80,
                          format_func=lambda x: f"{x:.0%}", key="p4_power")
-rel_target = q4.number_input("Lift worth detecting (relative %)", min_value=1.0, max_value=100.0, value=10.0,
-                             step=1.0, format="%.0f", key="p4_rel_target",
-                             help="Smallest relative lift the business would act on; used for the required sample.") / 100
+rel = q4.number_input("Smallest lift worth acting on (relative %)", min_value=1.0, max_value=100.0,
+                      value=SESOI0 * 100, step=1.0, format="%.0f", key="p4_rel_target",
+                      help=f"The smallest relative lift the business would act on (project default "
+                           f"{SESOI0:.0%}). Marked on both charts and used for power and sample size.") / 100
 
-n_t = int(round(N_TOTAL * share))
-n_c = N_TOTAL - n_t
-split = f"{share * 100:.0f}/{(1 - share) * 100:.0f}"
-mde_sel = S.mde(P_C, n_t, n_c, pw_alpha, power)
-mde_half = S.mde(P_C, N_TOTAL // 2, N_TOTAL // 2, pw_alpha, power)
-need_sel = S.required_total_n(P_C, rel_target * P_C, share, pw_alpha, power)
-need_half = S.required_total_n(P_C, rel_target * P_C, 0.5, pw_alpha, power)
-achieved = S.achieved_power(P_C, P_T, n_t, n_c, pw_alpha)
+sesoi = rel * P_C
+split = split_label(share)
+# compare with 50/50, or with the as-run split when 50/50 is the one selected (no duplicate cards)
+cmp_share = SHARE0 if abs(share - 0.5) < 1e-9 else 0.5
+cmp_label = f"{SPLIT0} as run" if cmp_share == SHARE0 else "50/50"
+sel_d = design_numbers(share, pw_alpha, power, rel)
+cmp_d = design_numbers(cmp_share, pw_alpha, power, rel)
+n_t, n_c = sel_d["n_t"], sel_d["n_c"]
+same_users = f"The comparison note uses the same {N_TOTAL:,} users split {split_label(cmp_share)}."
 
 m1, m2, m3, m4 = st.columns(4)
-kpi(m1, f"MDE at {split}", f"{mde_sel['mde_abs'] * 100:.2f} pp", f"{mde_sel['mde_rel']:+.0%} relative · {N_TOTAL:,} users")
-kpi(m2, "MDE at 50/50, same users", f"{mde_half['mde_abs'] * 100:.2f} pp", f"{mde_half['mde_rel']:+.0%} relative")
-kpi(m3, f"Users needed for a {rel_target:.0%} lift at {split}", f"{need_sel:,}",
-    f"{need_sel / N_TOTAL:.1f}× this test's sample")
-kpi(m4, f"Users needed for a {rel_target:.0%} lift at 50/50", f"{need_half:,}",
-    f"{need_sel / need_half:.1f}× fewer than at {split}")
+kpi(m1, "Lift worth acting on", f"{sesoi * 100:.2f} pp", f"{rel:.0%} × PSA rate {fmt_pct(P_C)}",
+    help="The smallest lift that would change the decision, set by the business before the test "
+         f"({rel:.0%} relative to the PSA conversion rate).")
+kpi(m2, f"MDE at {split}", f"{sel_d['mde'] * 100:.2f} pp", f"{cmp_label}: {cmp_d['mde'] * 100:.2f} pp",
+    help=f"Minimum detectable effect: the smallest true lift caught {power:.0%} of the time at α = {pw_alpha:.2f}, "
+         f"with {n_t:,} ad and {n_c:,} PSA users. {same_users}")
+kpi(m3, f"Power at {split}", fmt_power(sel_d["power_at_sesoi"]),
+    f"{cmp_label}: {fmt_power(cmp_d['power_at_sesoi'])}",
+    help=f"Chance of detecting a true lift of {sesoi * 100:.2f} pp (the lift worth acting on, {rel:.0%} relative) "
+         f"at α = {pw_alpha:.2f}. {same_users}")
+kpi(m4, f"Users needed at {split}", f"{sel_d['users_needed']:,}", f"{cmp_label}: {cmp_d['users_needed']:,}",
+    help=f"Total users for {power:.0%} power to detect the lift worth acting on ({rel:.0%} relative) at "
+         f"α = {pw_alpha:.2f}.")
 
-is_default_power = (share == SHARE0 and pw_alpha == ALPHA0 and power == POWER0)
-pc1, pc2 = st.columns(2)
-with pc1:
-    show(mde_figure(share, pw_alpha, power), key="p4_mde")
-    if is_default_power:
-        takeaway(CAT["ad_mde_split"])
-    else:
-        clears = "clears" if T["abs_lift"] >= mde_sel["mde_abs"] else "does not clear"
-        takeaway(f"At a {split} split these {N_TOTAL:,} users can detect a lift of {mde_sel['mde_abs'] * 100:.2f} pp "
-                 f"with {power:.0%} power at α = {pw_alpha:.2f}; a 50/50 split of the same users gets to "
-                 f"{mde_half['mde_abs'] * 100:.2f} pp. The observed {T['abs_lift'] * 100:.2f} pp {clears} the "
-                 f"{split} bar.")
-with pc2:
-    show(power_figure(n_t, n_c, pw_alpha, power), key="p4_power_curve")
-    if is_default_power:
-        takeaway(CAT["ad_power_curve"])
-    else:
-        takeaway(f"With {n_t:,} ad and {n_c:,} PSA users, a true lift of {mde_sel['mde_abs'] * 100:.2f} pp is caught "
-                 f"{power:.0%} of the time; a lift the size of the observed {T['abs_lift'] * 100:.2f} pp would be "
-                 f"caught {achieved:.0%} of the time.")
-st.caption(f"Sizing the next test: detecting a {rel_target:.0%} relative lift needs {need_half:,} users at 50/50 "
-           f"but {need_sel:,} at {split}. Unequal splits pay for a small control group with a lot of extra traffic. "
-           "The sample-size calculator on page 7 turns this into days of traffic.")
+is_default_power = (abs(share - SHARE0) < 1e-9 and pw_alpha == ALPHA0 and power == POWER0
+                    and abs(rel - SESOI0) < 1e-9)
+reach = ("within what this split can reliably detect" if sesoi >= sel_d["mde"]
+         else "below what this split can reliably detect")
+cmp_long = f"the {SPLIT0} split as run" if cmp_share == SHARE0 else "a 50/50 split of the same users"
+show(mde_figure(share, pw_alpha, power, sesoi), key="p4_mde")
+if is_default_power:
+    takeaway(CAT["ad_mde_split"])
+else:
+    takeaway(f"At a {split} split these {N_TOTAL:,} users detect lifts of {sel_d['mde'] * 100:.2f} pp or more "
+             f"with {power:.0%} power at α = {pw_alpha:.2f}; {cmp_long} gets to {cmp_d['mde'] * 100:.2f} pp. "
+             f"The smallest lift worth acting on ({rel:.0%} relative = {sesoi * 100:.2f} pp) is {reach}.")
+max_lift = max(0.6, 1.5 * sel_d["mde"] * 100, 1.25 * sesoi * 100)
+title = ("Power to detect a true lift, current sample (%)" if abs(share - SHARE0) < 1e-9
+         else f"Power to detect a true lift at a {split} split of the same users (%)")
+show(power_figure(n_t, n_c, pw_alpha, power, sesoi, title, max_lift), key="p4_power_curve")
+if is_default_power:
+    takeaway(CAT["ad_power_curve"])
+else:
+    takeaway(f"With {n_t:,} ad and {n_c:,} PSA users, power for the smallest lift worth acting on "
+             f"({sesoi * 100:.2f} pp) is {fmt_power(sel_d['power_at_sesoi'])} ({cmp_long}: "
+             f"{fmt_power(cmp_d['power_at_sesoi'])}); {power:.0%} power needs a true lift of at least "
+             f"{sel_d['mde'] * 100:.2f} pp. Power describes the design; it is not evaluated at the observed effect.")
+need = {s: S.required_total_n(P_C, sesoi, s, pw_alpha, power) for s in (0.5, 0.8, SHARE0)}
+st.caption(f"Sizing the next test: {power:.0%} power for a {rel:.0%} relative lift ({sesoi * 100:.2f} pp) at "
+           f"α = {pw_alpha:.2f} needs {need[0.5]:,} users at 50/50, {need[0.8]:,} at 80/20 and {need[SHARE0]:,} at "
+           f"{SPLIT0}. A small control group is paid for with a lot of extra traffic. The sample-size calculator on "
+           "page 7 turns this into days of traffic.")
 
 # ---------------------------------------------------------------- 5. business
 st.subheader("5 · Is it worth the money?")
 st.caption("The data has no revenue or cost fields: value per conversion is an explicit assumption and the CPM "
-           "must come from Finance. Incremental conversions are the number to quote; the dollar figures move "
-           "with the assumption.")
-i1, i2, _ = st.columns([1, 1, 1])
+           "must come from Finance. Incremental conversions are the number to quote; the USD figures move with "
+           "the assumption.")
+i1, i2 = st.columns(2, gap="medium")
 value = i1.number_input("Value per conversion (USD, assumption)", min_value=1.0, max_value=1000.0, value=VALUE0,
                         step=5.0, format="%.2f", key="p4_value",
                         help=f"Illustrative default of {VALUE0:.0f} USD. Replace with the margin per conversion "
@@ -322,75 +397,97 @@ be = {k: v * value / IMPRESSIONS * 1000 for k, v in INC.items()}
 val = {k: v * value for k, v in INC.items()}
 n1, n2, n3, n4 = st.columns(4)
 kpi(n1, "Incremental conversions", f"{INC['point']:,.0f}", f"95% CI {INC['ci_low']:,.0f} to {INC['ci_high']:,.0f}")
-kpi(n2, "Incremental value", f"{md_usd(val['point'] / 1e3, 0)}K",
-    f"95% CI {md_usd(val['ci_low'] / 1e3, 0)}K to {md_usd(val['ci_high'] / 1e3, 0)}K",
-    help="Incremental conversions × the assumed value per conversion.")
-kpi(n3, "Breakeven CPM", md_usd(be["point"]), f"95% CI {md_usd(be['ci_low'])} to {md_usd(be['ci_high'])}",
-    help="The most you can pay per 1,000 ad impressions and still get back at least the incremental value.")
-kpi(n4, "Caused by the ads", f"{BZ['share_of_ad_conversions_incremental']:.0%}",
-    f"of {T['conv_t']:,} ad-arm conversions",
-    help="Lift ÷ ad conversion rate: the share of the ad arm's conversions that would not have happened without "
-         f"the ads. That is ≈{BZ['impressions_per_incremental_conversion']:,.0f} impressions per incremental "
-         "conversion.")
+kpi(n2, "Share caused by the ads", f"{share_inc:.0%}", f"95% CI {share_inc_ci[0]:.0%} to {share_inc_ci[1]:.0%}")
+kpi(n3, "Last-touch overstatement", f"{overstate:.1f}×", f"{T['conv_t']:,} vs ≈{INC['point']:,.0f}")
+kpi(n4, "Breakeven CPM", usd(be["point"]), f"95% CI {be['ci_low']:.2f} to {be['ci_high']:.2f}",
+    help="The most you can pay per 1,000 ad impressions (USD) and still get back at least the incremental value, "
+         "at the value per conversion entered above.")
+st.caption(f"Incremental conversions = absolute lift × the {T['n_t']:,} users in the ad arm: conversions that would "
+           f"not have happened without the ads. They are {share_inc:.0%} of the {T['conv_t']:,} ad-arm conversions "
+           "(= 1 − 1/RR); the rest would have happened anyway, as the PSA rate shows. Last-touch attribution would "
+           f"credit all {T['conv_t']:,} to the campaign, {overstate:.1f}× what it caused.")
 
-bc1, bc2 = st.columns([2, 1])
-with bc1:
-    fig_be = F.fig_breakeven(INC["point"], INC["ci_low"], INC["ci_high"], IMPRESSIONS, value, cpm,
-                             "Breakeven CPM by value per conversion (USD)", value_max=max(150.0, value * 1.5))
-    show(fig_be, key="p4_breakeven")
-    if value == VALUE0 and cpm is None:
-        takeaway(CAT["ad_breakeven"])
+fig_be = F.fig_breakeven(INC["point"], INC["ci_low"], INC["ci_high"], IMPRESSIONS, value, cpm,
+                         "Breakeven CPM by value per conversion (USD)", value_max=max(150.0, value * 1.5))
+show(fig_be, key="p4_breakeven")
+if value == VALUE0 and cpm is None:
+    takeaway(CAT["ad_breakeven"])
+else:
+    text = (f"At {usd_input(value)} per conversion (assumed), the ≈{INC['point']:,.0f} incremental conversions are "
+            f"worth ≈{usd_k(val['point'])}, so the campaign breaks even at a CPM of {usd(be['point'])} "
+            f"(95% CI {usd(be['ci_low'])} to {usd(be['ci_high'])}).")
+    if cpm is not None:
+        cost = IMPRESSIONS * cpm / 1000
+        text += (f" At {usd(cpm)} CPM the {IMPRESSIONS / 1e6:.1f}M ad impressions cost ≈{usd_k(cost)}, "
+                 f"about {usd(cost / INC['point'])} per incremental conversion: "
+                 f"{payback_verdict(cpm, be)[0].lower()}.")
+    takeaway(text)
+with st.container(border=True):
+    if cpm is None:
+        st.markdown(f"**Pays-back verdict.** Enter the CPM you actually paid to get a verdict. At {usd_input(value)} "
+                    f"per conversion the ≈{INC['point']:,.0f} incremental conversions are worth "
+                    f"≈{usd_k(val['point'])}, and the campaign breaks even below **{usd(be['point'])}** per 1,000 "
+                    f"impressions (95% CI {usd(be['ci_low'])} to {usd(be['ci_high'])}).")
     else:
-        text = (f"At ${value:,.2f} per conversion (assumed), the ≈{INC['point']:,.0f} incremental conversions are "
-                f"worth ≈${val['point'] / 1e3:,.0f}K, so the campaign breaks even at a CPM of ${be['point']:.2f} "
-                f"(95% CI ${be['ci_low']:.2f} to ${be['ci_high']:.2f}).")
-        if cpm is not None:
-            cost = IMPRESSIONS * cpm / 1000
-            text += (f" At ${cpm:.2f} CPM the {IMPRESSIONS / 1e6:.1f}M ad impressions cost ≈${cost / 1e3:,.0f}K, "
-                     f"about ${cost / INC['point']:,.2f} per incremental conversion: "
-                     f"{payback_verdict(cpm, be)[0].lower()}.")
-        takeaway(text)
-with bc2:
-    with st.container(border=True):
+        label, color, reason = payback_verdict(cpm, be)
+        cost = IMPRESSIONS * cpm / 1000
         st.markdown("**Pays-back verdict**")
-        if cpm is None:
-            st.markdown(f"Enter the CPM you actually paid to get a verdict. At {md_usd(value)} per conversion the "
-                        f"campaign breaks even below **{md_usd(be['point'])}** per 1,000 impressions "
-                        f"(95% CI {md_usd(be['ci_low'])} to {md_usd(be['ci_high'])}).")
-        else:
-            label, color, reason = payback_verdict(cpm, be)
-            cost = IMPRESSIONS * cpm / 1000
-            st.badge(label, color=color)
-            st.markdown(
-                f"- Media cost: **{md_usd(cost / 1e3, 0)}K** for {IMPRESSIONS / 1e6:.1f}M ad impressions\n"
-                f"- Cost per incremental conversion: **{md_usd(cost / INC['point'])}** "
-                f"(95% CI {md_usd(cost / INC['ci_high'])} to {md_usd(cost / INC['ci_low'])})\n"
-                f"- Incremental return on ad spend: **{val['point'] / cost:.2f}×** "
-                f"(95% CI {val['ci_low'] / cost:.2f}× to {val['ci_high'] / cost:.2f}×)\n\n"
-                f"Why: {reason}.")
-        st.caption("Counts only conversions the ads caused (ad rate minus PSA rate), not every conversion "
-                   "in the ad arm.")
+        st.badge(label, color=color)
+        st.markdown(
+            f"- Media cost: **{usd_k(cost)}** for {IMPRESSIONS / 1e6:.1f}M ad impressions\n"
+            f"- Cost per incremental conversion: **{usd(cost / INC['point'])}** "
+            f"(95% CI {usd(cost / INC['ci_high'])} to {usd(cost / INC['ci_low'])})\n"
+            f"- Incremental return on ad spend: **{val['point'] / cost:.2f}×** "
+            f"(95% CI {val['ci_low'] / cost:.2f}× to {val['ci_high'] / cost:.2f}×)\n\n"
+            f"Why: {reason}.")
+    st.caption("Counts only conversions the ads caused (ad rate minus PSA rate), not every conversion in the ad arm.")
+
+st.markdown("**The price of keeping the measurement: an always-on PSA holdout (R1)**")
+o1, o2, o3, o4 = st.columns(4, vertical_alignment="center")
+hold = o1.slider("PSA holdout (% of users)", 1, 20, int(round(HOLDOUT0 * 100)), step=1, format="%d%%",
+                 key="p4_holdout",
+                 help="Share of users who keep seeing the PSA instead of the ad, so the campaign's incremental "
+                      f"effect can be measured continuously. Project proposal: {HOLDOUT0:.0%}.") / 100
+users_h = N_TOTAL * hold
+lost = {"point": users_h * (P_T - P_C), "ci_low": users_h * T["abs_ci_low"], "ci_high": users_h * T["abs_ci_high"]}
+mde_h = S.mde(P_C, N_TOTAL - int(round(users_h)), int(round(users_h)), ALPHA0, POWER0)["mde_abs"]
+kpi(o2, "Users held out", f"{users_h / 1e3:,.1f}K", f"{hold:.0%} of {N_TOTAL / 1e3:,.0f}K per flight")
+kpi(o3, "Conversions forgone", f"≈{lost['point']:,.0f}", f"95% CI {lost['ci_low']:,.0f} to {lost['ci_high']:,.0f}",
+    help="Held-out users × the measured lift: conversions the ads would have caused among them.")
+kpi(o4, "Value forgone", usd_k(lost["point"] * value, 1), f"{usd_input(value)} each, assumed")
+takeaway(f"A {hold:.0%} holdout keeps {users_h / 1e3:,.1f}K of every {N_TOTAL / 1e3:,.0f}K users on the PSA and gives "
+         f"up ≈{lost['point']:,.0f} conversions per comparable flight (≈{usd_k(lost['point'] * value, 1)} at "
+         f"{usd_input(value)} each). In return the team keeps a running causal read: with {POWER0:.0%} power it can "
+         f"detect a lift of {mde_h * 100:.2f} pp (this test's {1 - SHARE0:.0%} PSA arm: "
+         f"{PW['mde_current']['mde_abs'] * 100:.2f} pp). Without a holdout, reporting falls back on last-touch "
+         f"attribution, which would credit the campaign {overstate:.1f}× what it caused.")
 
 # ---------------------------------------------------------------- 6. risks
 st.subheader("6 · Risks and caveats")
 wilson_w = [hi - lo for lo, hi in (S.wilson_ci(T["conv_t"], T["n_t"]), S.wilson_ci(T["conv_c"], T["n_c"]))]
 cramers = [b["cramers_v"] for b in AD["balance"]]
+shares = AD["heterogeneity"]["exposure_bucket"]["arm_shares"]
 risks = [
     "<b>No timestamps, so no novelty-effect or duration check.</b> The file has one row per user and no dates, only "
     "the weekday and hour when each user saw the most ads. We cannot tell how long the test ran, whether the lift "
     "faded as users got used to the ads (novelty effect) or whether it held across full weekly cycles. Treat the "
     "lift as an average over an unknown window; logging assignment timestamps is part of R4.",
-    f"<b>The SRM pass is weak evidence.</b> The intended {SHARE0 * 100:.0f}/{(1 - SHARE0) * 100:.0f} split is not "
-    f"documented; it is inferred from the round number of the observed split, so p = {srm['p_value']:.4f} says "
-    f"little. Exposure parity (mean {g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f} ads per user) is the stronger "
-    "sanity check.",
-    "<b>Total ads, peak day and peak hour are post-assignment.</b> They are recorded after randomization and differ "
-    f"slightly by arm (Cramér's V {min(cramers):.3f} to {max(cramers):.3f}), so they are never used as covariates "
-    "and the segment results on page 5 are exploratory.",
+    f"<b>The sample-ratio check cannot fail here.</b> The ad arm has {SRM['n_t']:,} users, the nearest whole number to "
+    f"exactly {SHARE0:.0%} of {N_TOTAL:,} ({SRM['deviation_users']:.2f} users off). Random assignment would typically "
+    f"miss by about {SRM['sd_users_under_random_assignment']:.0f} users, and landing this close happens about "
+    f"{SRM['prob_exactly_nearest_integer']:.2%} of the time. So the split was set by a quota, or the export was "
+    f"trimmed to it, and the SRM test passes by construction (p = {p_text(SRM['p_value'])}). It is reported as "
+    "uninformative, not as a pass.",
+    f"<b>Exposure parity is the meaningful check, and it is close but not exact.</b> Mean ads per user match "
+    f"({g_ad['mean_ads']:.1f} vs {g_psa['mean_ads']:.1f}), but the shapes differ a little: "
+    f"{shares['1-5']['psa']:.0%} of PSA vs {shares['1-5']['ad']:.0%} of ad users saw 1–5 ads, and "
+    f"{shares['11-20']['psa']:.0%} vs {shares['11-20']['ad']:.0%} saw 11–20 (KS D = {ks_d:.3f}). Total ads, peak day "
+    f"and peak hour are recorded after assignment (Cramér's V {min(cramers):.3f} to {max(cramers):.3f} between arms), "
+    "so they are never used as covariates and the segment results on page 5 are exploratory.",
     f"<b>The control group sets the noise.</b> With only {T['n_c'] / N_TOTAL:.0%} of users in PSA, the PSA rate's "
     f"95% interval is {wilson_w[1] / wilson_w[0]:.1f}× wider than the ad rate's; that is what limits the precision "
     "of the lift.",
-    "<b>Dollar figures rest on assumptions.</b> Value per conversion and CPM are not in the data. The decision to "
+    "<b>USD figures rest on assumptions.</b> Value per conversion and CPM are not in the data. The decision to "
     "keep the campaign rests on the incremental conversions; whether it pays back needs Finance's numbers.",
 ]
 caveat("<b>Read the result with these limits in mind.</b><ul style='margin:.35rem 0 .1rem 0; padding-left:1.25rem'>"
@@ -398,24 +495,31 @@ caveat("<b>Read the result with these limits in mind.</b><ul style='margin:.35re
 
 # ---------------------------------------------------------------- 7. decision
 robust = all(bool((lift_intervals(a)["abs_low"] > 0).all()) for a in ALPHAS)
+sesoi0 = PW["power_at_relative_lift"][str(SESOI0)]
 st.subheader("7 · Decision and next steps")
 with st.container(border=True):
     st.markdown(
-        "**Decision: keep the campaign running at the current budget (R1, Growth PM).** "
+        f"**Decision: keep the campaign running at the current budget, with an always-on {HOLDOUT0:.0%} PSA "
+        "holdout (R1, Growth PM).** "
         f"The lift is {fmt_pp(T['abs_lift'])} (95% CI {pp_range(T['abs_ci_low'], T['abs_ci_high'])})"
         + (", and its interval excludes 0 under every method and confidence level on this page" if robust else "")
         + f": ≈{INC['point']:,.0f} incremental conversions per comparable flight.\n\n"
-        "- **R1 · Growth PM:** keep an always-on 5–10% PSA holdout; track the incremental conversion rate and the "
-        "cost per incremental conversion. Confirm with Finance that the CPM we pay is below breakeven "
-        f"(≈{md_usd(BZ['breakeven_cpm_usd']['point'])} at an assumed {md_usd(VALUE0, 0)} per conversion).\n"
-        "- **R2 · Growth PM + media buyer:** do not double the budget on this evidence. The test did not vary spend. "
-        "Run randomized 2× budget or frequency-cap arms (50/50 or 80/20 split, sized with the page-7 calculator) "
-        f"and read out marginal incremental conversions per extra {md_usd(1000, 0)} (marginal iROAS).\n"
-        "- **R4 · Analytics + Eng:** next time use a 50/50 or 80/20 split instead of 96/4, log assignment "
-        "timestamps, and pre-register the primary metric and guardrails (unsubscribe / complaint rate, CPA).")
+        f"- **R1 · Growth PM:** keep a {HOLDOUT0:.0%} PSA holdout running (≈{HOLD['conversions_forgone']:,.0f} "
+        f"conversions forgone per {N_TOTAL / 1e3:,.0f}K-user flight, ≈{usd_k(HOLD['value_forgone_usd'], 1)} at the "
+        f"assumed {usd(VALUE0, 0)}) and report incremental conversions and cost per incremental conversion, not "
+        f"last-touch conversions, which would overstate the campaign {overstate:.1f}×. Confirm with Finance that the "
+        f"CPM we pay is below breakeven (≈{usd(BZ['breakeven_cpm_usd']['point'])} at an assumed {usd(VALUE0, 0)} "
+        "per conversion).\n"
+        "- **R2 · Growth PM + media buyer:** do not double the budget on this evidence. The test compared ads with "
+        "PSAs at one spend level, so it cannot say what extra spend buys, and the lift lives in heavy users "
+        "(page 5). Run randomized 2× budget or frequency-cap arms (50/50 or 80/20 split, sized with the page-7 "
+        "calculator) and read out marginal incremental conversions per extra USD 1,000.\n"
+        f"- **R4 · Analytics + Eng:** next time use a 50/50 or 80/20 split instead of {SPLIT0} (at {SPLIT0} this "
+        f"test had only {sesoi0['power_current_split']:.0%} power for a {SESOI0:.0%} lift), log assignment "
+        "timestamps, pre-register the primary metric and guardrails (unsubscribe / complaint rate, CPA), and "
+        "monitor the sample ratio while the test runs.")
 
-split0 = f"{SHARE0 * 100:.0f}/{(1 - SHARE0) * 100:.0f}"
-mde_ratio = AD["power"]["mde_current"]["mde_abs"] / AD["power"]["mde_if_5050_same_total"]["mde_abs"]
+mde_ratio = PW["mde_current"]["mde_abs"] / PW["mde_if_5050_same_total"]["mde_abs"]
 how_to_read(f"""
 **What this page is.** The standard write-up of one experiment (a "readout"): what we expected, how we measured
 it, what happened, and what we should do. The controls let you re-run the key calculations live.
@@ -438,23 +542,32 @@ the conclusion does not hinge on a statistical choice.
 band holds the middle 95% (or whatever level you chose). A band far from the "no effect" line means the result is not
 a fluke of this particular sample.
 
-**Power and MDE.** Power is the chance the test catches an effect of a given size if it is real. The MDE (minimum
-detectable effect) is the smallest effect it catches with the chosen power, {POWER0:.0%} by default. With a
-{split0} split the small PSA group sets the noise level; the same users split 50/50 could detect an effect about
-{mde_ratio:.1f}× smaller. Use this to size a test *before* running it, not to explain away a null result afterwards.
+**Power and MDE.** Power is the chance the test catches a true effect of a given size. The MDE (minimum detectable
+effect) is the smallest effect it catches with the chosen power, {POWER0:.0%} by default. Both describe the *design*,
+so they are judged at the smallest lift worth acting on (the orange dotted line, {SESOI0:.0%} relative by default),
+not at the lift we observed: "power at the observed effect" only restates the p-value. With a {SPLIT0} split the small
+PSA group sets the noise level; the same users split 50/50 could detect an effect about {mde_ratio:.1f}× smaller.
+Use this to size a test *before* running it, not to explain away a result afterwards.
 
 **Breakeven CPM.** CPM is the cost of 1,000 ad impressions. Breakeven CPM is the most you can pay per 1,000
 impressions and still get back at least the value of the conversions the ads *caused*. Value per conversion is an
 assumption (there is no revenue in the data), so change it and watch the line move. If the CPM you actually pay is
 below the line, the campaign pays back.
 
+**Holdout cost.** An always-on holdout keeps a small share of users on the PSA so the campaign's incremental effect
+stays measurable. Its cost is the conversions those users would have gained from the ads; the slider shows how cost
+and measurement precision trade off.
+
 **Common misreadings.**
 - "A {T['rel_lift']:.0%} lift means {T['rel_lift']:.0%} more revenue." No: it is relative to a small base rate, and
   the value per conversion is assumed.
 - "All {T['conv_t']:,} ad-arm conversions came from the ads." No: the PSA rate says about
-  {1 - BZ['share_of_ad_conversions_incremental']:.0%} would have happened anyway.
-- "Significant, so double the budget." This test compared ads with no ads at one spend level. It says nothing about
+  {1 - share_inc:.0%} would have happened anyway. That is why last-touch attribution would overstate the campaign
+  {overstate:.1f}×.
+- "Significant, so double the budget." This test compared ads with PSAs at one spend level. It says nothing about
   what the next dollar buys, which is what R2's budget test is for.
-- "p ≈ 0 means a big effect." It means the effect is very unlikely to be zero. The interval shows how big it is.
+- "The SRM check passed, so assignment is fine." Here it passes by construction (the split is quota-exact); exposure
+  parity is the check that carries information.
+- "p < 0.0001 means a big effect." It means the effect is very unlikely to be zero. The interval shows how big it is.
 - "The effect will last." With no timestamps we cannot check whether it fades over time (novelty effect).
 """)

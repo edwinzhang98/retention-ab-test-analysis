@@ -26,6 +26,7 @@ DIMS = {  # radio label -> (column, axis title, phrase used in chart titles)
 }
 METRICS = {"D1 and D7": ("retention_1", "retention_7"), "D7 only": ("retention_7",), "D1 only": ("retention_1",)}
 LOW_BUCKETS = ("0", "1-4", "5-14")  # fewer than 15 rounds
+FIRST_GATE = 30                     # level of the first progression gate in the control version
 BIN_ROUNDS, BINNED_UP_TO = 5, 150   # retention-by-rounds curve: 5-round bins up to 150, then one open bin
 
 
@@ -46,6 +47,13 @@ def curve(max_rounds: int, by_version: bool) -> pd.DataFrame:
     return R.engagement_curve(players(), max_rounds, by="version" if by_version else None)
 
 
+@st.cache_data(show_spinner=False)
+def zero_round_d1_flags() -> int:
+    """Players with 0 rounds who are nevertheless flagged as back on Day 1."""
+    p = players()
+    return int(((p["sum_gamerounds"] == 0) & p["retention_1"]).sum())
+
+
 def seg_name(dim: str, value) -> str:
     return f"{value} rounds" if dim == "rounds_bucket" else str(value)
 
@@ -59,7 +67,12 @@ def segment_takeaway(rates: pd.DataFrame, dim: str, metrics: tuple[str, ...]) ->
             f"{F.METRIC_NAMES[m]} ranges from {lo[m] * 100:.1f}% ({seg_name(dim, lo[dim])}, "
             f"{lo['share_of_players'] * 100:.0f}% of players) to {hi[m] * 100:.1f}% ({seg_name(dim, hi[dim])}, "
             f"{hi['share_of_players'] * 100:.0f}% of players), a {(hi[m] - lo[m]) * 100:.1f} pp gap")
-    return "; ".join(parts) + "."
+    text = "; ".join(parts) + "."
+    if dim == "rounds_bucket":
+        text += " Rounds are counted through day 14, so part of this gap is there by construction."
+    elif dim == "version":
+        text += " The version gap is not certified: the arms are unbalanced (pages 2 and 6)."
+    return text
 
 
 # ------------------------------------------------------------------ header + KPIs
@@ -67,23 +80,25 @@ page_header("Retention Analysis", "Which new players leave first, and where is t
 
 by_rounds = rates_by("rounds_bucket")
 low = by_rounds[by_rounds["rounds_bucket"].astype(str).isin(LOW_BUCKETS)]
+low_share = low["players"].sum() / len(players())
 k = st.columns(4)
 k[0].metric("D1 retention", fmt_pct(ov["retention_1"], 1),
             f"95% CI {fmt_pct(ov['retention_1_ci_low'], 1)} to {fmt_pct(ov['retention_1_ci_high'], 1)}",
             delta_color="off", delta_arrow="off",
-            help="Share of installs who played again on the day after install (Cookie Cats `retention_1`).")
+            help="Share of installs who played on the day after install (Cookie Cats `retention_1`).")
 k[1].metric("D7 retention", fmt_pct(ov["retention_7"], 1),
             f"95% CI {fmt_pct(ov['retention_7_ci_low'], 1)} to {fmt_pct(ov['retention_7_ci_high'], 1)}",
             delta_color="off", delta_arrow="off",
-            help="Share of installs who played on day 7 after install (`retention_7`), whether or not they "
-                 "played on Day 1.")
-k[2].metric("Never back on Day 1", fmt_pct(1 - ov["retention_1"], 1),
+            help="Share of installs who played on day 7 after install (`retention_7`). Classic D7, not rolling: it "
+                 "counts play on that day, whether or not the player came back on Day 1.")
+k[2].metric("Not back on Day 1", fmt_pct(1 - ov["retention_1"], 1),
             f"{no_d1['players']:,} players",
             delta_color="off", delta_arrow="off", help="Installs with no play on the day after install.")
-k[3].metric("Installs with fewer than 15 rounds", fmt_pct(low["players"].sum() / len(players()), 0),
+k[3].metric("Installs with < 15 rounds", fmt_pct(low_share, 0),
             f"D7 at most {fmt_pct(low['retention_7'].max(), 1)}", delta_color="off", delta_arrow="off",
             help="Share of installs with 0-14 rounds in their first 14 days, and the highest D7 retention among "
-                 "those three buckets (0, 1-4, 5-14 rounds).")
+                 "those three buckets (0, 1-4, 5-14 rounds). Rounds are counted through day 14, so this sizes the "
+                 "early-churn segment; it is not a Day-0 targeting rule.")
 
 # ------------------------------------------------------------------ where is the biggest drop?
 st.subheader("Where is the biggest drop?")
@@ -149,13 +164,19 @@ if (max_rounds, by_version) == (200, True):
     takeaway(TK["ret_engagement_curve"])
 else:
     pl = players()["sum_gamerounds"]
-    text = (f"Half of players stop before {int(pl.median())} rounds; {(pl >= 30).mean() * 100:.0f}% reach round 30, "
+    share_gate = (pl >= FIRST_GATE).mean()
+    text = (f"Half of players play {int(pl.median())} rounds or fewer; {share_gate * 100:.0f}% reach round "
+            f"{FIRST_GATE}, so at most about {share_gate * 100:.0f}% of installs could have met the level-30 gate; "
             f"{(pl >= 40).mean() * 100:.0f}% reach round 40 and {(pl >= max_rounds).mean() * 100:.1f}% reach round "
             f"{max_rounds}.")
     if by_version:
-        wide = cv.pivot(index="rounds_at_least", columns="group", values="share_of_players")
-        gap = (wide["gate_40"] - wide["gate_30"]).abs().max() * 100
-        text += f" The two versions' curves are never more than {gap:.1f} pp apart up to {max_rounds} rounds."
+        gap = cv.pivot(index="rounds_at_least", columns="group", values="share_of_players")
+        gap = (gap["gate_40"] - gap["gate_30"]).loc[1:] * 100
+        at = int(gap.abs().idxmax())
+        text += (f" The two versions' curves are never more than {gap.abs().max():.1f} pp apart up to "
+                 f"{max_rounds} rounds")
+        text += (f"; the largest gap (round {at}) comes before the first gate, where the versions are identical, so "
+                 "it reflects who was assigned to each version (page 2), not the gate." if at < FIRST_GATE else ".")
     takeaway(text)
 
 show(F.fig_retention_by_rounds(R.retention_by_rounds(players(), BINNED_UP_TO, BIN_ROUNDS),
@@ -165,49 +186,56 @@ show(F.fig_retention_by_rounds(R.retention_by_rounds(players(), BINNED_UP_TO, BI
 takeaway(TK["ret_by_rounds_curve"])
 
 caveat("Rounds are counted over each player's first 14 days, which overlaps the Day-7 window: a player who comes back "
-       "on Day 7 has more days in which to play rounds. So 'more rounds, more retention' is correlation, not cause, "
-       "and it cannot tell us that pushing players to play more would keep them. An experiment has to show that.")
+       "on Day 7 has more days in which to play rounds. So the link between rounds and retention is partly "
+       "definitional. It sizes the early-churn segment, but it is not a Day-0 targeting rule, and it cannot tell us "
+       "that pushing players to play more would keep them. An experiment has to show that.")
 
 st.markdown(
     f"**What we recommend (R6).** Focus retention work on the first session and Day 1: players with fewer than 15 "
-    f"rounds are {low['players'].sum() / len(players()) * 100:.0f}% of installs and almost none of them come back. "
-    "The Onboarding PM should run a Day-1 re-engagement or onboarding experiment aimed at them, with D7 retention as "
-    "the primary metric, and size it with the calculator on page 7.")
+    f"rounds are {low_share * 100:.0f}% of installs and at most {low['retention_7'].max() * 100:.1f}% of them play "
+    "on Day 7. Day-1 return is the earliest strong signal of who stays, but it is an association: the Onboarding PM "
+    "should validate it with a Day-1 re-engagement experiment aimed at these players, with D7 retention as the "
+    "primary metric, sized with the calculator on page 7.")
 try:
     st.page_link("views/p7_decision.py", label="Decision & Recommendations", icon=":material/arrow_forward:")
 except StreamlitPageNotFoundError:  # page run on its own, outside the multipage app
     pass
 
 how_to_read(f"""
-**What this page is.** Retention for {int(ov['players']):,} new players of a mobile puzzle game (Cookie Cats):
-how many come back the day after install (**D1**) and a week later (**D7**), and which kinds of players are lost
-first.
+**What this page is.** Retention for {int(ov['players']):,} new players of a mobile puzzle game (Cookie Cats): how
+many come back the day after install (**D1**) and on day 7 after install (**D7**), and which kinds of players are
+lost first. The data has no install dates, so all players are treated as one install cohort.
 
-**Funnel.** Each bar is the share of all installs that made it to a step. The biggest single drop is
-between the first session and Day 1: {(1 - ov['retention_1']) * 100:.1f}% of new players never come back for a
-second day. The last bar
-counts players back on Day 1 *and* Day 7, so it is a bit lower than overall D7 retention, which also includes
-players who skipped Day 1.
+**Funnel.** Each bar is the share of all installs that made it to a step. The biggest single drop is between the
+first session and Day 1: {(1 - ov['retention_1']) * 100:.1f}% of new players don't come back on Day 1. The last bar
+counts players back on Day 1 *and* Day 7, so it is lower than overall D7 retention ({ov['retention_7'] * 100:.1f}%),
+which also includes players who skipped Day 1. The steps are counted independently: {zero_round_d1_flags()}
+players with 0 rounds are flagged as back on Day 1 (the flag means "came back to the game"), about 0.1% of players,
+and no conclusion depends on it.
 
 **Gap by dimension.** For three ways of splitting players, the bar is the difference in D7 retention
 between the best and the worst group. A long bar means the split separates stayers from leavers well. Engagement
-depth separates them by far the most; the experiment version barely matters.
+depth separates them by far the most, partly by construction (see the note on rounds). The version gap is small next
+to engagement, but large enough to decide the gate question (page 6).
 
 **Segment explorer.** Choose how to split players and which metric to show. Bars are the share retained in each
 group; the thin whiskers are the 95% interval (the plausible range for that group's true rate), and n is the group
 size. Everything is recomputed from the player table when you change a control.
 
 **Engagement curve.** For every round count N on the horizontal axis, the line shows the share of players who
-played at least N rounds. It falls fast early on, which is where players are lost. The dotted lines mark the two
-gate positions (level 30 and 40) from the experiment on page 6; the slider zooms out.
+played at least N rounds. It falls fast early on, which is where players are lost. Half of players play
+{int(players()['sum_gamerounds'].median())} rounds or fewer. The dotted lines mark the two gate positions (level 30
+and 40) from the experiment on page 6; the slider zooms out.
 
 **Retention by rounds.** Players are grouped into {BIN_ROUNDS}-round bins; the lines show D1 and D7 retention per
 bin.
 
 **Common misreadings.**
 - "Players who play more stay longer, so make them play more." The rounds are counted over 14 days, so players who
-  stay longer *also* get more time to play. The link can run both ways; only an experiment can tell.
+  stay longer *also* get more time to play. The link is partly definitional; only an experiment can tell.
 - "D7 retention is {ov['retention_7'] * 100:.1f}%, so {(1 - ov['retention_7']) * 100:.0f}% churned by day 7." Not
   exactly: D7 means *played on day 7*; a player can skip day 7 and come back later. The data has no later days.
+- "Day-1 returners stay, so a Day-1 push will keep players." Day-1 return is a signal of who stays, not proof that
+  prompting a visit lifts D7; that is what the R6 experiment tests.
 - Small groups have wide whiskers; compare intervals, not just bar heights.
 """)

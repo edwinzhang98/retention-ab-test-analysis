@@ -1,36 +1,69 @@
 -- =============================================================================
 -- sql/04_lift_by_day_and_hour.sql
 --
--- Purpose : Exploratory heterogeneity cuts of the ad experiment: conversion
---           rate per arm and lift (ad - psa) by peak ad day, peak ad hour and
---           exposure bucket of each user (the same three cuts as dashboard page 5).
+-- Purpose : Exploratory heterogeneity cuts of the ad experiment, by the user's
+--           peak ad day, peak ad hour, daypart (peak hour in 6-hour blocks) and
+--           exposure bucket (the cuts on dashboard page 5). Each segment answers
+--           two different questions:
+--             1. Is there a lift in this segment?                       (z_stat)
+--             2. Does this segment's lift differ from the other
+--                segments' lift? - the heterogeneity question        (z_vs_rest)
 -- Input   : data/raw/marketing_AB.csv - one row per user (rules as in
 --           01_stg_marketing_ab.sql).
--- Output  : 1 row per (dimension, segment) - 7 days, 24 hours, 8 exposure buckets.
---             dimension                'most_ads_day' | 'most_ads_hour' | 'exposure_bucket'
---             segment                  Monday..Sunday | 0..23 | 1-5 .. 200+
---             users_ad, users_psa      users per arm in the segment
+-- Output  : 1 row per (dimension, segment) - 7 days, 24 hours, 4 dayparts,
+--           8 exposure buckets.
+--             dimension                     'most_ads_day' | 'most_ads_hour' | 'daypart' |
+--                                           'exposure_bucket'
+--             segment                       Monday..Sunday | 0..23 | Night (0-5)..Evening (18-23) |
+--                                           1-5 .. 200+
+--             users_ad, users_psa           users per arm in the segment
+--             share_of_arm_ad, _psa         users in the segment / users in the arm: each arm's
+--                                           mix across the segments of the dimension
 --             conversions_ad, conversions_psa
 --             conversion_rate_ad, conversion_rate_psa
---             abs_lift                 rate_ad - rate_psa (proportion; x100 = pp)
---             rel_lift                 rate_ad / rate_psa - 1 (NULL if the PSA cell has 0 conversions)
---             z_stat                   pooled two-proportion z statistic
---             significant_unadjusted   |z_stat| > 1.96 with NO multiple-comparison correction
+--             abs_lift                      rate_ad - rate_psa (proportion; x100 = pp)
+--             rel_lift                      rate_ad / rate_psa - 1 (NULL if the PSA cell has 0 conversions)
+--             z_stat                        pooled two-proportion z statistic: is the lift != 0 here?
+--             lift_significant_unadjusted   |z_stat| > 1.96, with NO multiple-comparison correction
+--             incremental_conversions       abs_lift * users_ad
+--             lift_rest                     lift among all OTHER segments of the dimension
+--             diff_vs_rest                  segment lift minus rest lift, on Agresti-Caffo adjusted
+--                                           proportions ((conversions + 1) / (users + 2) in each of
+--                                           the four groups)
+--             diff_vs_rest_ci95_low, _high  95% Wald CI for diff_vs_rest
+--             z_vs_rest                     diff_vs_rest / its standard error
+--             differs_from_rest_unadjusted  |z_vs_rest| > 1.96, with NO multiple-comparison correction
+--             standardized_lift             Mantel-Haenszel weighted average of the segment lifts
+--                                           (one value per dimension, repeated on its rows)
 -- Run     : from the repo root, one of
 --             python -m src.sql_check sql/04_lift_by_day_and_hour.sql   (print this result)
 --             python -m src.sql_check                                   (run every file + reconcile)
 --             duckdb -c ".read sql/04_lift_by_day_and_hour.sql"         (DuckDB CLI)
--- Notes   : - All three dimensions are recorded after assignment (heavier users
---             see more ads), so these are descriptive cuts, not causal subgroup
---             effects, and they are never used as covariates.
---           - Testing many segments at alpha = 0.05 produces "significant" cells
---             by chance alone. Holm / Bonferroni / BH adjustment, Newcombe CIs and
---             the interaction likelihood-ratio test live in src/stats.py and
---             reports/tables/ad_lift_by_*.csv; decide on those, not on
---             significant_unadjusted.
---           - Several hour cells have very few PSA users or zero PSA conversions,
---             so per-hour lifts are noisy; a Wald CI would be misleading there and
---             is deliberately not reported.
+-- Notes   : - All four dimensions are recorded after assignment (heavier users see
+--             more ads), so these are descriptive cuts, not causal subgroup effects,
+--             and never covariates. share_of_arm_* shows that the arms' mixes differ
+--             a little: the exposure-parity check the quota-exact SRM pass cannot give.
+--           - Two questions, two tests. Because the overall lift is real, most large
+--             segments show a lift != 0; how many do mostly measures segment size
+--             (power), not heterogeneity. Heterogeneity is z_vs_rest. With m segments
+--             at alpha = 0.05 about m x 0.05 contrasts cross 1.96 by chance (0.35 for
+--             days, 1.2 for hours), so decide on corrected results: the interaction
+--             likelihood-ratio test per dimension, Holm / Bonferroni / BH adjustment
+--             and the Newcombe CIs are in src/stats.py and reports/tables/ad_lift_by_*.csv
+--             (DuckDB has no normal CDF for p-values).
+--           - Agresti-Caffo adjustment keeps cells with 0 PSA conversions (several
+--             night hours) from getting a zero variance and a spurious contrast. It is
+--             why diff_vs_rest is close to, but not exactly, abs_lift - lift_rest.
+--           - Peak day / hour describe the user's habits, not a slot the media plan
+--             bought; a pattern here is a hypothesis for a daypart test, not a
+--             reallocation rule.
+--           - standardized_lift is a sensitivity check on post-assignment strata:
+--             if it stays close to the crude lift in 02_conversion_by_group.sql for
+--             every dimension, the segment mix does not explain the headline (no
+--             Simpson's reversal).
+--           - In exposure buckets, control conversion rises steeply with exposure:
+--             exposure tracks how active a user is, so the bucket pattern says where
+--             the lift lives, not what an extra ad does.
 -- =============================================================================
 
 WITH params AS (
@@ -54,6 +87,14 @@ weekdays (most_ads_day, day_order) AS (
         ('Friday', 5), ('Saturday', 6), ('Sunday', 7)
 ),
 
+dayparts (daypart, daypart_order, min_hour, max_hour) AS (
+    VALUES
+        ('Night (0-5)',       1,  0,  5),
+        ('Morning (6-11)',    2,  6, 11),
+        ('Afternoon (12-17)', 3, 12, 17),
+        ('Evening (18-23)',   4, 18, 23)
+),
+
 exposure_buckets (exposure_bucket, bucket_order, min_ads, max_ads) AS (
     VALUES
         ('1-5',     1,   1,          5),
@@ -66,7 +107,7 @@ exposure_buckets (exposure_bucket, bucket_order, min_ads, max_ads) AS (
         ('200+',    8, 201, 1000000000)
 ),
 
--- Long format: every user appears once per dimension, so one GROUP BY serves all three cuts
+-- Long format: every user appears once per dimension, so one GROUP BY serves all four cuts
 user_segments AS (
     SELECT
         1                  AS dimension_order,
@@ -93,6 +134,19 @@ user_segments AS (
 
     SELECT
         3,
+        'daypart',
+        p.daypart,
+        p.daypart_order,
+        u.test_group,
+        u.converted
+    FROM stg_marketing_ab AS u
+    LEFT JOIN dayparts AS p
+        ON u.most_ads_hour BETWEEN p.min_hour AND p.max_hour
+
+    UNION ALL
+
+    SELECT
+        4,
         'exposure_bucket',
         b.exposure_bucket,
         b.bucket_order,
@@ -117,13 +171,35 @@ segment_counts AS (
     GROUP BY dimension_order, dimension, segment_order, segment
 ),
 
+-- Dimension totals: every user is in exactly one segment per dimension, so
+-- "rest" = dimension total minus the segment
+segment_vs_rest_counts AS (
+    SELECT
+        *,
+        SUM(users_ad)        OVER dim - users_ad        AS rest_users_ad,
+        SUM(users_psa)       OVER dim - users_psa       AS rest_users_psa,
+        SUM(conversions_ad)  OVER dim - conversions_ad  AS rest_conversions_ad,
+        SUM(conversions_psa) OVER dim - conversions_psa AS rest_conversions_psa,
+        users_ad::DOUBLE  / SUM(users_ad)  OVER dim     AS share_of_arm_ad,
+        users_psa::DOUBLE / SUM(users_psa) OVER dim     AS share_of_arm_psa
+    FROM segment_counts
+    WINDOW dim AS (PARTITION BY dimension)
+),
+
 segment_rates AS (
     SELECT
         *,
         conversions_ad::DOUBLE  / users_ad                                  AS conversion_rate_ad,
         conversions_psa::DOUBLE / users_psa                                 AS conversion_rate_psa,
-        (conversions_ad + conversions_psa)::DOUBLE / (users_ad + users_psa) AS pooled_rate
-    FROM segment_counts
+        (conversions_ad + conversions_psa)::DOUBLE / (users_ad + users_psa) AS pooled_rate,
+        rest_conversions_ad::DOUBLE  / rest_users_ad
+          - rest_conversions_psa::DOUBLE / rest_users_psa                   AS lift_rest,
+        -- Agresti-Caffo adjusted proportions: add 1 success and 1 failure to each group
+        (conversions_ad + 1)::DOUBLE       / (users_ad + 2)                 AS ac_rate_ad,
+        (conversions_psa + 1)::DOUBLE      / (users_psa + 2)                AS ac_rate_psa,
+        (rest_conversions_ad + 1)::DOUBLE  / (rest_users_ad + 2)            AS ac_rate_rest_ad,
+        (rest_conversions_psa + 1)::DOUBLE / (rest_users_psa + 2)           AS ac_rate_rest_psa
+    FROM segment_vs_rest_counts
 ),
 
 segment_stats AS (
@@ -132,7 +208,14 @@ segment_stats AS (
         conversion_rate_ad - conversion_rate_psa                AS abs_lift,
         conversion_rate_ad / NULLIF(conversion_rate_psa, 0) - 1 AS rel_lift,
         (conversion_rate_ad - conversion_rate_psa)
-            / SQRT(pooled_rate * (1 - pooled_rate) * (1.0 / users_ad + 1.0 / users_psa)) AS z_stat
+            / SQRT(pooled_rate * (1 - pooled_rate) * (1.0 / users_ad + 1.0 / users_psa)) AS z_stat,
+        (ac_rate_ad - ac_rate_psa) - (ac_rate_rest_ad - ac_rate_rest_psa)                AS diff_vs_rest,
+        SQRT(ac_rate_ad       * (1 - ac_rate_ad)       / (users_ad + 2)
+           + ac_rate_psa      * (1 - ac_rate_psa)      / (users_psa + 2)
+           + ac_rate_rest_ad  * (1 - ac_rate_rest_ad)  / (rest_users_ad + 2)
+           + ac_rate_rest_psa * (1 - ac_rate_rest_psa) / (rest_users_psa + 2))           AS se_vs_rest,
+        -- Mantel-Haenszel weight of the segment (for standardized_lift)
+        users_ad::DOUBLE * users_psa / (users_ad + users_psa)                            AS mh_weight
     FROM segment_rates
 )
 
@@ -141,6 +224,8 @@ SELECT
     s.segment,
     s.users_ad,
     s.users_psa,
+    s.share_of_arm_ad,
+    s.share_of_arm_psa,
     s.conversions_ad,
     s.conversions_psa,
     s.conversion_rate_ad,
@@ -148,7 +233,16 @@ SELECT
     s.abs_lift,
     s.rel_lift,
     s.z_stat,
-    ABS(s.z_stat) > p.z_crit_95 AS significant_unadjusted
+    ABS(s.z_stat) > p.z_crit_95                          AS lift_significant_unadjusted,
+    s.abs_lift * s.users_ad                              AS incremental_conversions,
+    s.lift_rest,
+    s.diff_vs_rest,
+    s.diff_vs_rest - p.z_crit_95 * s.se_vs_rest          AS diff_vs_rest_ci95_low,
+    s.diff_vs_rest + p.z_crit_95 * s.se_vs_rest          AS diff_vs_rest_ci95_high,
+    s.diff_vs_rest / s.se_vs_rest                        AS z_vs_rest,
+    ABS(s.diff_vs_rest / s.se_vs_rest) > p.z_crit_95     AS differs_from_rest_unadjusted,
+    SUM(s.mh_weight * s.abs_lift) OVER (PARTITION BY s.dimension)
+        / SUM(s.mh_weight) OVER (PARTITION BY s.dimension) AS standardized_lift
 FROM segment_stats AS s
 CROSS JOIN params AS p
 ORDER BY s.dimension_order, s.segment_order;

@@ -1,17 +1,17 @@
 """Page 6 · Gate experiment (Cookie Cats): should the first gate move from level 30 to 40?
 
-Same readout logic as page 4, applied to the second experiment. The sample
-ratio check trips its warning level, so it comes first. The sensitivity panel
-re-runs the D1 / D7 comparison live on subsets of fct_game_players; headline
-numbers come from reports/results.json.
+Order: the sample-ratio check first (raw assignment counts), then the integrity
+checks that locate the imbalance and size how much of the naive D7 gap it
+explains, then the naive D1 / D7 result (not certified), the guardrails, a live
+sensitivity panel and the decision. Headline numbers come from
+reports/results.json; the sensitivity panel re-runs the comparison on subsets of
+fct_game_players. Every "significant / not significant" statement on the page is
+read off the confidence interval it sits next to.
 """
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-from scipy import stats as sps
 
 from common import (C, F, R, S, caveat, fmt_pct, fmt_pp, how_to_read, load_cache, load_catalog_takeaways,
                     load_results, page_header, show, takeaway)
@@ -19,7 +19,14 @@ from common import (C, F, R, S, caveat, fmt_pct, fmt_pp, how_to_read, load_cache
 RES = load_results()
 G = RES["cookie"]["gate"]
 SRM = G["srm"]
-DQ = RES["data_quality"]["cookie"]
+SBS = G["srm_by_stratum"]
+NC = G["negative_control"]
+DEC = G["d7_decomposition"]
+WC = G["worst_case_bound"]
+PG = G["pre_gate_engagement"]
+RT = G["retest_sizing"]
+RD = G["rounds"]
+DROPPED = RES["data_quality"]["cookie"]["outliers_dropped"]
 CAT = load_catalog_takeaways()
 BOOT = load_cache("boot_gate_lift")
 ALPHA0 = float(RES["config"]["alpha"])
@@ -29,8 +36,9 @@ T_ARM, C_ARM = "gate_40", "gate_30"
 NO_CAP = C.GAMEROUNDS_OUTLIER_MAX          # the project's outlier rule; above the cleaned max
 CAPS = [100, 250, 500, 1000, 2000, NO_CAP]
 ALPHAS = [0.10, 0.05, 0.01]
-PRE_GATE_ROUNDS = 29                      # nobody can reach the level-30 gate in fewer rounds
-CURVE_MAX = 100
+STRATA = {"rounds_lt_15": "Fewer than 15 rounds",
+          "rounds_lt_30": "Fewer than 30 rounds (never met a gate)",
+          "rounds_ge_30": "30 or more rounds (could meet the gate)"}
 
 
 # ------------------------------------------------------------------ helpers
@@ -42,30 +50,41 @@ def pp_range(lo: float, hi: float) -> str:
     return f"{lo * 100:+.2f} to {hi * 100:+.2f} pp"
 
 
-def p_eq(p: float) -> str:
-    return "p < 0.0001" if p < 1e-4 else f"p = {p:.4f}"
-
-
 def ci_short(lo: float, hi: float) -> str:
     """Interval in pp without the unit, for the small metric notes."""
     return f"{lo * 100:+.2f} to {hi * 100:+.2f}"
+
+
+def p_text(p: float) -> str:
+    """p-value for display: never prints 0, two significant digits above 0.001."""
+    if p < 1e-4:
+        return "< 0.0001"
+    return f"{p:.4f}" if (p < 1e-3 or p > 0.99) else f"{p:.2g}"
+
+
+def p_eq(p: float) -> str:
+    s = p_text(p)
+    return f"p {s}" if s.startswith("<") else f"p = {s}"
 
 
 def kpi(col, label: str, value: str, note: str | None = None, help: str | None = None) -> None:
     col.metric(label, value, delta=note, delta_color="off", delta_arrow="off", help=help)
 
 
-def srm_status(s: dict) -> str:
-    """PASS / WARNING / FAIL. Newer results.json files carry it; older ones only have p and the threshold."""
-    if s.get("status"):
-        return s["status"]
-    warn = s.get("warn_threshold", 0.01)
-    return "FAIL" if s["p_value"] < s["threshold"] else ("WARNING" if s["p_value"] < warn else "PASS")
+def ci_verdict(m: dict, name: str, level: str) -> str:
+    """Plain-language reading of one gate_40 − gate_30 difference, taken from its CI only."""
+    lo, hi = m["abs_ci_low"], m["abs_ci_high"]
+    if hi < 0:
+        return f"{name} is lower in gate_40 (the {level} CI excludes 0)"
+    if lo > 0:
+        return f"{name} is higher in gate_40 (the {level} CI excludes 0)"
+    return (f"{name} is inconclusive (the {level} CI includes 0): a drop of up to {abs(lo) * 100:.1f} pp is "
+            "not ruled out")
 
 
 @st.cache_data(show_spinner=False)
 def gate_compare(exclude_zero: bool, cap: int, alpha: float) -> dict:
-    """D1 / D7 two-proportion tests, MDE and the rounds guardrail on a subset of players."""
+    """D1 / D7 two-proportion tests and MDEs on a subset of players (the naive comparison)."""
     p = load_cache("fct_game_players")
     keep = p["sum_gamerounds"] <= cap
     if exclude_zero:
@@ -78,32 +97,26 @@ def gate_compare(exclude_zero: bool, cap: int, alpha: float) -> dict:
         res = S.two_prop_test(v.loc[T_ARM, col], n_t, v.loc[C_ARM, col], n_c, alpha=alpha).to_dict()
         res["mde_abs"] = S.mde(res["rate_c"], n_t, n_c, alpha, POWER0)["mde_abs"]
         out[metric] = res
-    rt = d.loc[d["version"] == T_ARM, "sum_gamerounds"]
-    rc = d.loc[d["version"] == C_ARM, "sum_gamerounds"]
-    out["rounds"] = {"median_t": float(rt.median()), "median_c": float(rc.median()), "mean_t": float(rt.mean()),
-                     "mean_c": float(rc.mean()), "mw_p": float(sps.mannwhitneyu(rt, rc).pvalue)}
     return out
 
 
 @st.cache_data(show_spinner=False)
-def engagement() -> tuple[pd.DataFrame, dict]:
-    """Engagement curve by version plus a pre-gate balance check: up to round 29 no player can
-    have met either gate, so play up to that point should not differ between versions."""
+def zero_round_flags() -> dict:
+    """Zero-round players and how many of them carry a return flag (data note for the toggle)."""
     p = load_cache("fct_game_players")
-    curve = R.engagement_curve(p, CURVE_MAX, by="version")
-    wide = curve.pivot(index="rounds_at_least", columns="group", values="share_of_players")
-    gap = (wide[T_ARM] - wide[C_ARM]) * 100
-    pre, post = gap.loc[1:PRE_GATE_ROUNDS], gap.loc[41:CURVE_MAX]
-    capped = {arm: np.minimum(p.loc[p["version"] == arm, "sum_gamerounds"], PRE_GATE_ROUNDS) for arm in (T_ARM, C_ARM)}
-    check = {"pre_min": float(pre.min()), "pre_max": float(pre.max()), "pre_all_below": bool((pre < 0).all()),
-             "post_max": float(post.max()), "post_all_above": bool((post > 0).all()),
-             "pre_mw_p": float(sps.mannwhitneyu(capped[T_ARM], capped[C_ARM]).pvalue)}
-    return curve, check
+    z = p[p["sum_gamerounds"] == 0]
+    return {"n": len(z), "d1": int(z["retention_1"].sum()), "d7": int(z["retention_7"].sum())}
+
+
+@st.cache_data(show_spinner=False)
+def version_curve() -> pd.DataFrame:
+    """Engagement curve by version up to 60 rounds (same input as the catalog's gate_engagement_gap)."""
+    return R.engagement_curve(load_cache("fct_game_players"), 60, by="version")
 
 
 def forest_rows(cur: dict, cur_label: str) -> pd.DataFrame:
     """Headline (results.json) and current-check rows in the shape fig_lift_forest expects."""
-    keys = ("n_t", "n_c", "rate_t", "rate_c", "abs_lift", "abs_ci_low", "abs_ci_high", "p_value", "alpha")
+    keys = ("n_t", "n_c", "rate_t", "rate_c", "abs_lift", "abs_ci_low", "abs_ci_high", "p_value")
     rows = []
     for metric, name in (("retention_7", "D7"), ("retention_1", "D1")):
         for label, src in (("headline", G), (cur_label, cur)):
@@ -115,106 +128,153 @@ def forest_rows(cur: dict, cur_label: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def separate_gate_labels(fig: go.Figure) -> go.Figure:
-    """At half width the 'gate 30' / 'gate 40' labels collide; anchor them away from each other."""
-    for ann in fig.layout.annotations:
-        if ann.text == "gate 30":
-            ann.xanchor = "right"
-        elif ann.text == "gate 40":
-            ann.xanchor = "left"
-    return fig
-
-
-def gap_figure(curve: pd.DataFrame, n_t: int, n_c: int) -> go.Figure:
-    """gate_40 − gate_30 gap in the engagement curve with a pointwise 95% band, styled like src/figures.py."""
-    wide = curve.pivot(index="rounds_at_least", columns="group", values="share_of_players").loc[1:]
-    s_t, s_c = wide[T_ARM], wide[C_ARM]
-    gap = ((s_t - s_c) * 100).to_numpy()
-    half = sps.norm.ppf(0.975) * np.sqrt(s_t * (1 - s_t) / n_t + s_c * (1 - s_c) / n_c).to_numpy() * 100
-    x = wide.index.to_numpy()
-    fig = go.Figure()
-    fig.add_vrect(x0=1, x1=PRE_GATE_ROUNDS, fillcolor=F.GREY_LIGHT, opacity=0.3, line_width=0, layer="below")
-    fig.add_annotation(x=(1 + PRE_GATE_ROUNDS) / 2, y=0.98, yref="paper", text="before any gate", showarrow=False,
-                       yanchor="top", font=dict(size=11, color=F.INK_2))
-    fig.add_scatter(x=np.concatenate([x, x[::-1]]), y=np.concatenate([gap + half, (gap - half)[::-1]]),
-                    fill="toself", fillcolor="rgba(42,120,214,0.12)", line=dict(width=0), hoverinfo="skip",
-                    name="Pointwise 95% CI")
-    fig.add_scatter(x=x, y=gap, mode="lines", line=dict(color=F.BLUE, width=2), name="gate_40 − gate_30",
-                    customdata=np.stack([s_c * 100, s_t * 100], axis=1),
-                    hovertemplate="≥ %{x} rounds: %{y:+.2f} pp<br>gate_30 %{customdata[0]:.1f}% · "
-                                  "gate_40 %{customdata[1]:.1f}%<extra></extra>")
-    fig.add_hline(y=0, line=dict(color=F.INK_2, width=1))
-    for g, side in ((30, "right"), (40, "left")):
-        fig.add_vline(x=g, line=dict(color=F.INK_2, width=1, dash="dot"))
-        fig.add_annotation(x=g, y=1, yref="paper", text=f"gate {g}", showarrow=False, yanchor="bottom",
-                           xanchor=side, font=dict(size=11, color=F.INK_2))
-    F._layout(fig, "Gap between the versions' curves, gate_40 − gate_30 (pp)", height=400,
-              xaxis_title="Game rounds played in first 14 days (at least)",
-              yaxis_title="Difference in share of players (pp)", legend=False)
-    return fig
-
-
 # ------------------------------------------------------------------ page
 page_header("Gate Experiment (Cookie Cats)", "Should the first gate move from level 30 to level 40?")
 
-# ---------------------------------------------------------------- SRM first
-status = srm_status(SRM)
-warn_thr = SRM.get("warn_threshold", 0.01)
+# ---------------------------------------------------------------- SRM first (raw assignment counts)
+status = SRM["status"]
 n_t, n_c = SRM["n_t"], SRM["n_c"]
-excess = n_t - SRM["expected_t"]
-dropped = DQ["outliers_dropped"]
-raw = S.srm_check(n_t + sum(o["version"] == T_ARM for o in dropped), n_c + sum(o["version"] == C_ARM for o in dropped),
-                  SRM["intended_share_t"], SRM["threshold"])
 share_i = SRM["intended_share_t"]
-srm_line = (f"The split was meant to be {(1 - share_i) * 100:.0f}/{share_i * 100:.0f} but came out "
-            f"{n_c:,} gate_30 vs {n_t:,} gate_40 ({SRM['observed_share_t']:.2%} in gate_40, {excess:+,.0f} vs "
-            f"expected). Chi-square {p_eq(SRM['p_value'])}")
-raw_line = (f" (On the raw table, before dropping the one logging-error player: {raw['n_c']:,} vs {raw['n_t']:,}, "
-            f"{p_eq(raw['p_value'])}.)" if dropped else "")
-if status in ("WARN", "WARNING"):
-    caveat(f"<b>Sample ratio mismatch: WARNING.</b> {srm_line}: below the {warn_thr:g} warning level but above the "
-           f"{SRM['threshold']:g} hard-fail threshold used in this project. We treat it as a <b>warning that blocks "
-           "certification</b>: the readout below shows the direction of the effect, but its size cannot be signed "
-           f"off until the assignment is debugged.{raw_line}")
+srm_line = (f"The split was meant to be {(1 - share_i) * 100:.0f}/{share_i * 100:.0f} but the raw assignment "
+            f"counts are {n_c:,} gate_30 vs {n_t:,} gate_40 ({SRM['observed_share_t']:.2%} in gate_40 instead of "
+            f"{share_i:.0%}). Chi-square {p_eq(SRM['p_value'])}")
+warn_line = f"the {SRM['warn_threshold']:g} warning line (project convention)"
+fail_line = f"the {SRM['threshold']:g} hard-fail line (Kohavi et al. convention)"
+if status == "WARNING":
+    caveat(f"<b>Sample ratio mismatch: WARNING.</b> {srm_line}: between {warn_line} and {fail_line}. A warning "
+           "blocks certification: the comparisons below show the direction of the result, not a size we can sign "
+           "off. The integrity checks locate the imbalance and estimate how much of the D7 gap it explains.")
 elif status == "FAIL":
-    caveat(f"<b>Sample ratio mismatch: FAIL.</b> {srm_line}: below the {SRM['threshold']:g} hard-fail threshold. "
-           f"Treat every number on this page as untrustworthy until the assignment is fixed.{raw_line}")
+    caveat(f"<b>Sample ratio mismatch: FAIL.</b> {srm_line}: below {fail_line}. Treat every number on this page as "
+           "untrustworthy until the assignment is fixed.")
 else:
     st.caption(f"Sample ratio check passed. {srm_line}.")
 
-# ---------------------------------------------------------------- headline
+ncr = NC["never_reached_30"]["retention_7"]
+dec_ci = DEC["install_level_effect_ci_if_only_reachers"]
 g7, g1 = G["retention_7"], G["retention_1"]
-lost = -g7["abs_lift"] * g7["n_t"]
-lost_lo, lost_hi = -g7["abs_ci_high"] * g7["n_t"], -g7["abs_ci_low"] * g7["n_t"]
+with st.container(border=True):
+    st.markdown(
+        f"**Readout in one line.** The naive comparison says gate_40 lowers D7 retention by "
+        f"{abs(g7['abs_lift']) * 100:.2f} pp, but the arms are unbalanced. Once that is separated out, the part the "
+        f"gate could cause is {fmt_pp(DEC['within_reached_30'])} per install (95% CI {pp_range(*dec_ci)}): "
+        "probably small, possibly zero, with no sign of a benefit. **Keep gate_30; fix assignment before any "
+        "re-test. The result is not certified.**")
+
+# ---------------------------------------------------------------- integrity checks
+st.subheader("1 · Integrity checks: where does the imbalance come from?")
+i1, i2, i3, i4 = st.columns(4)
+kpi(i1, "Extra players", f"{WC['excess_players_gate_40']:,}",
+    f"{G['excess_players_with_lt_15_rounds']:,} with < 15 rounds",
+    help="gate_40 minus gate_30 players in the analysis table; the second number comes from the raw counts of "
+         "players with fewer than 15 rounds.")
+kpi(i2, "Negative control", fmt_pp(ncr["abs_lift"]), f"D7, {p_eq(ncr['p_value'])}",
+    help="D7 difference among players with fewer than 30 rounds, who never reached either gate, so their retention "
+         f"should not differ by version. 95% CI {pp_range(ncr['abs_ci_low'], ncr['abs_ci_high'])}.")
+kpi(i3, "Gate could cause", fmt_pp(DEC["within_reached_30"]), f"CI {ci_short(*dec_ci)}",
+    help="The part of the naive D7 gap that sits with players who reached level 30, in pp per install, with its "
+         "95% CI.")
+kpi(i4, "Worst case", fmt_pp(WC["d7_diff_if_excess_removed"]),
+    f"if {WC['excess_players_gate_40']:,} never returned",
+    help=f"The naive D7 gap if all {WC['excess_players_gate_40']:,} extra gate_40 players had never come back on "
+         "Day 7 (removed from gate_40 with no retained players).")
+
+st.markdown("**Where are gate_40's extra players?** Sample ratio within groups defined by play before any gate")
+srm_rows = [(label, SBS[key]) for key, label in STRATA.items()] + [("All players", SRM)]
+status_text = {"FAIL": "**FAIL-level**", "WARNING": "**WARNING**", "PASS": "Balanced"}
+table = ["| Players with | gate_30 | gate_40 | gate_40 − gate_30 | Share in gate_40 | Chi-square p | Status |",
+         "|---|---:|---:|---:|---:|---:|---|"]
+for label, s in srm_rows:
+    table.append(f"| {label} | {s['n_c']:,} | {s['n_t']:,} | {s['n_t'] - s['n_c']:+,} | {s['observed_share_t']:.2%} "
+                 f"| {p_text(s['p_value'])} | {status_text.get(s['status'], s['status'])} |")
+st.markdown("\n".join(table))
+lt15, lt30, ge30 = SBS["rounds_lt_15"], SBS["rounds_lt_30"], SBS["rounds_ge_30"]
+takeaway(f"The imbalance sits with players who never reached level 30: gate_40 has {lt30['n_t'] - lt30['n_c']:,} more "
+         f"of them ({p_eq(lt30['p_value'])}), {lt15['n_t'] - lt15['n_c']:,} of whom played fewer than 15 rounds "
+         f"({p_eq(lt15['p_value'])}). Players with 30+ rounds are balanced ({p_eq(ge30['p_value'])}). Play below level "
+         "30 happens before either gate, so the gate cannot have caused this: something added low-engagement "
+         "installs to gate_40 (assignment or logging).")
+dropped = ", ".join(f"{o['version']}, {o['sum_gamerounds']:,} rounds" for o in DROPPED)
+st.caption(f"Raw assignment counts, before {len(DROPPED)} logging-error player ({dropped}) was dropped, so the total "
+           f"gap here is {n_t - n_c:,} and {WC['excess_players_gate_40']:,} in the analysis table. The < 15 rows are "
+           "a subset of the < 30 rows.")
+
+curve = version_curve()
+show(F.fig_engagement_gap(curve, G["players"][T_ARM], G["players"][C_ARM],
+                          "Engagement curve gap, gate_40 − gate_30 (pp of players, pointwise 95% CI)"),
+     key="p6_gap")
+takeaway(CAT["gate_engagement_gap"])
+
+nc_rows = pd.DataFrame([
+    {"label": "All players (primary result)", "role": "main", **g7},
+    {"label": "Never reached level 30 (negative control)", "role": "control", **ncr},
+    {"label": "Reached level 30", "role": "other", **NC["reached_30"]["retention_7"]},
+])
+show(F.fig_effect_by_stratum(nc_rows, "D7 retention difference by stratum: a negative-control check (pp, 95% CI)"),
+     key="p6_negative_control")
+takeaway(CAT["gate_negative_control"])
+
+parts = pd.DataFrame([
+    {"label": "Naive gap (all players)", "value": DEC["naive_diff"], "role": "total"},
+    {"label": "Player mix (extra low-engagement players)", "value": DEC["composition"], "role": "artifact"},
+    {"label": "Players who never met a gate", "value": DEC["within_never_reached_30"], "role": "artifact"},
+    {"label": "Players who could meet the gate", "value": DEC["within_reached_30"], "role": "effect",
+     "ci_low": dec_ci[0], "ci_high": dec_ci[1]},
+])
+show(F.fig_gap_decomposition(parts, "Where the naive D7 gap comes from (pp of installs)"), key="p6_decomposition")
+takeaway(CAT["gate_decomposition"])
+
+# ---------------------------------------------------------------- naive result
+st.subheader("2 · Result: D1 and D7 retention (naive comparison, not certified)")
 k1, k2, k3, k4 = st.columns(4)
 kpi(k1, "D7 retention, gate_40", fmt_pct(g7["rate_t"]), f"gate_30: {fmt_pct(g7['rate_c'])}")
-kpi(k2, "D7 difference", fmt_pp(g7["abs_lift"]), f"95% CI {ci_short(g7['abs_ci_low'], g7['abs_ci_high'])}",
-    help=f"gate_40 − gate_30, percentage points. {p_eq(g7['p_value'])}.")
-kpi(k3, "D1 difference", fmt_pp(g1["abs_lift"]), f"95% CI {ci_short(g1['abs_ci_low'], g1['abs_ci_high'])}",
-    help=f"gate_40 − gate_30, percentage points. {p_eq(g1['p_value'])}.")
-kpi(k4, f"Fewer D7 players / {g7['n_t'] / 1e3:.0f}K", f"≈{round(lost, -1):,.0f}",
-    f"95% CI {round(lost_lo, -1):,.0f}–{round(lost_hi, -1):,.0f}",
-    help=f"D7 difference × {g7['n_t']:,} gate_40 installs: how many fewer players would still be playing on Day 7.")
-st.caption(f"Two-sided two-proportion z-tests, gate_40 vs gate_30: D7 {p_eq(g7['p_value'])}, "
-           f"D1 {p_eq(g1['p_value'])}. Players: {n_c:,} gate_30, {n_t:,} gate_40.")
+kpi(k2, "D7 difference (naive)", fmt_pp(g7["abs_lift"]), f"95% CI {ci_short(g7['abs_ci_low'], g7['abs_ci_high'])}",
+    help=f"gate_40 − gate_30, all {g7['n_t'] + g7['n_c']:,} players, {p_eq(g7['p_value'])}. Includes the imbalance "
+         "shown above, so it overstates what the gate itself did.")
+kpi(k3, "D1 retention, gate_40", fmt_pct(g1["rate_t"]), f"gate_30: {fmt_pct(g1['rate_c'])}")
+kpi(k4, "D1 difference (naive)", fmt_pp(g1["abs_lift"]), f"95% CI {ci_short(g1['abs_ci_low'], g1['abs_ci_high'])}",
+    help=f"gate_40 − gate_30, {p_eq(g1['p_value'])}.")
+show(F.fig_gate_rates(G, "D1 and D7 retention by gate version (%, 95% CI)"), key="p6_rates")
+takeaway(CAT["gate_rates"])
+show(F.fig_gate_bootstrap(BOOT, G, "Bootstrap distribution of gate_40 − gate_30 retention (pp)"), key="p6_boot")
+takeaway(CAT["gate_bootstrap"])
 
-r1, r2 = st.columns(2)
-with r1:
-    show(F.fig_gate_rates(G, "D1 and D7 retention by gate version (%, 95% CI)"), key="p6_rates")
-    takeaway(CAT["gate_rates"])
-with r2:
-    fig_gb = F.fig_gate_bootstrap(BOOT, G, "Bootstrap: gate_40 − gate_30 retention (pp)", height=400)
-    fig_gb.update_layout(bargap=0.04)  # the shared layout's bar gap makes a histogram look like a comb
-    show(fig_gb, key="p6_boot")
-    takeaway(CAT["gate_bootstrap"])
+# ---------------------------------------------------------------- guardrails
+st.subheader("3 · Guardrails: Day 1 and rounds played")
+w1, w2, w3, w4 = st.columns(4)
+kpi(w1, "D1 drop not ruled out", f"{abs(g1['abs_ci_low']) * 100:.1f} pp",
+    f"95% CI {ci_short(g1['abs_ci_low'], g1['abs_ci_high'])}",
+    help="The low end of the D1 confidence interval: the largest D1 drop (gate_40 vs gate_30) the data still "
+         "allows.")
+kpi(w2, "Mean rounds diff.", f"{RD['mean_diff']:+.2f}",
+    f"95% CI {RD['mean_diff_boot_ci'][0]:+.2f} to {RD['mean_diff_boot_ci'][1]:+.2f}",
+    help=f"gate_40 − gate_30 mean rounds in the first 14 days ({RD['mean_t']:.2f} vs {RD['mean_c']:.2f}); "
+         f"user-level bootstrap with {RD['n_boot']:,} resamples, because rounds are heavy-tailed.")
+kpi(w3, "Median rounds", f"{RD['median_c']:.0f} vs {RD['median_t']:.0f}",
+    f"Mann–Whitney {p_eq(RD['mannwhitney_p'])}",
+    help="gate_30 vs gate_40. The rank test compares the whole distribution of rounds played, not just the median.")
+kpi(w4, f"D7 MDE, {POWER0:.0%} power", f"±{g7['mde']['mde_abs'] * 100:.2f} pp",
+    f"D1: ±{g1['mde']['mde_abs'] * 100:.2f} pp",
+    help=f"The smallest true difference this sample detects with {POWER0:.0%} power at α = {ALPHA0:.2f}: a property "
+         "of the design, not a verdict on the observed gap.")
+takeaway(f"No engagement difference: mean rounds played differ by {RD['mean_diff']:+.2f} (gate_40 − gate_30; "
+         f"bootstrap 95% CI {RD['mean_diff_boot_ci'][0]:+.2f} to {RD['mean_diff_boot_ci'][1]:+.2f}, {RD['n_boot']:,} "
+         f"resamples) and the medians are {RD['median_c']:.0f} vs {RD['median_t']:.0f} ({p_eq(RD['mannwhitney_p'])}). "
+         f"The case for a later gate was more play before the gate, and it does not show up. D1 is "
+         f"{fmt_pp(g1['abs_lift'])} (95% CI "
+         f"{pp_range(g1['abs_ci_low'], g1['abs_ci_high'])}): a D1 drop of up to "
+         f"{abs(g1['abs_ci_low']) * 100:.1f} pp cannot be ruled out.")
 
 # ---------------------------------------------------------------- sensitivity
-st.subheader("Sensitivity: does the result survive other reasonable choices?")
+st.subheader("4 · Sensitivity: does the naive result move?")
+zr = zero_round_flags()
 s1, s2, s3 = st.columns([1, 1, 1.4])
 alpha = s1.radio("Significance level α", ALPHAS, index=ALPHAS.index(ALPHA0) if ALPHA0 in ALPHAS else 1,
                  format_func=lambda a: f"{a:.2f}", horizontal=True, key="p6_alpha")
 exclude_zero = s2.toggle("Exclude 0-round players", key="p6_excl0",
-                         help="Players who installed but never played a round, so they never met either gate.")
+                         help=f"{zr['n']:,} players installed but never played a round, so they never met either "
+                              f"gate. {zr['d1']} of them are flagged as back on Day 1 ({zr['d7']} on Day 7): the "
+                              "flags mean 'came back to the game', not 'played a round'.")
 cap = s3.select_slider("Drop players with more than N rounds", CAPS, value=NO_CAP, key="p6_cap",
                        format_func=lambda c: f"no cap ({NO_CAP:,} rule)" if c == NO_CAP else f"{c:,}",
                        help=f"The project's outlier rule drops players above {NO_CAP:,} rounds (one player). "
@@ -235,150 +295,104 @@ kpi(m4, "D7 change vs headline", f"{shift:+.2f} pp", f"headline {fmt_pp(g7['abs_
 
 fig = F.fig_lift_forest(forest_rows(cur, "this check"), "row",
                         "Retention difference, gate_40 − gate_30: headline vs this check (pp)",
-                        sig_col="excludes_0", seg_title="")
-for tr in fig.data:
-    tr.name = {"Significant after correction": "CI excludes 0",
-               "Not significant after correction": "CI includes 0"}.get(tr.name, tr.name)
-fig.update_xaxes(title_text="gate_40 − gate_30 retention (pp)")
-fig.update_yaxes(automargin=True)
+                        sig_col="excludes_0", sig_label="CI excludes 0", nonsig_label="CI includes 0",
+                        xtitle="gate_40 − gate_30 retention (pp)")
+# the forest's default hover describes segment contrasts; this chart compares checks of one experiment
+fig.update_traces(hovertemplate="<b>%{y}</b><br>Difference %{x:.2f} pp (CI %{customdata[7]:.2f} to "
+                                "%{customdata[8]:.2f})<br>gate_40 %{customdata[0]:.2f}% (n=%{customdata[2]:,.0f})"
+                                "<br>gate_30 %{customdata[1]:.2f}% (n=%{customdata[3]:,.0f})"
+                                "<br>p = %{customdata[4]:.4f}<extra></extra>")
 show(fig, key="p6_sensitivity")
-st.caption(f"Headline = all {G['players'][C_ARM] + G['players'][T_ARM]:,} players, {conf(ALPHA0)} CI (from results.json). "
-           "'This check' = the filters and α chosen above, recomputed live.")
+st.caption(f"Headline = all {G['players'][C_ARM] + G['players'][T_ARM]:,} players, {conf(ALPHA0)} CI (from "
+           "results.json). 'This check' = the filters and α chosen above, recomputed live. Both are the naive "
+           "comparison: no filter here removes the assignment imbalance.")
 
-parts = []
+parts_txt = []
 if exclude_zero:
-    parts.append("without players who never played a round")
+    parts_txt.append("without players who never played a round")
 if cap < NO_CAP:
-    parts.append(f"without players above {cap:,} rounds")
+    parts_txt.append(f"without players above {cap:,} rounds")
 if alpha != ALPHA0:
-    parts.append(f"at α = {alpha:.2f}")
-scope = (f"Headline (all players, α = {ALPHA0:.2f})" if is_headline else "This check (" + ", ".join(parts) + ")")
-if c7["abs_ci_high"] < 0:
-    d7_verdict = "The D7 drop holds."
-elif c7["abs_ci_low"] > 0:
-    d7_verdict = "D7 turns positive on this cut."
-else:
-    d7_verdict = "On this cut the D7 drop is no longer distinguishable from 0."
-if c1["abs_ci_high"] < 0:
-    d1_verdict = ("D1 also comes out significantly lower here, but this is one of several cuts tried, so read it as "
-                  "consistent with a D1 drop rather than proof of one.")
-elif c1["abs_ci_low"] > 0:
-    d1_verdict = "D1 turns positive on this cut."
-else:
-    d1_verdict = "D1 stays inconclusive."
-takeaway(f"{scope}: D7 {fmt_pp(c7['abs_lift'])} ({conf(alpha)} CI {pp_range(c7['abs_ci_low'], c7['abs_ci_high'])}, "
-         f"{p_eq(c7['p_value'])}) and D1 {fmt_pp(c1['abs_lift'])} ({conf(alpha)} CI "
-         f"{pp_range(c1['abs_ci_low'], c1['abs_ci_high'])}). {d7_verdict} {d1_verdict}")
-
-# ---------------------------------------------------------------- power + guardrail
-st.subheader("Power and the engagement guardrail")
-rd = cur["rounds"]
-w1, w2, w3, w4 = st.columns(4)
-kpi(w1, "D7 MDE", f"±{c7['mde_abs'] * 100:.2f} pp", f"observed {fmt_pp(c7['abs_lift'])}",
-    help=f"Minimum detectable D7 change at {POWER0:.0%} power and α = {alpha:.2f} for this sample.")
-kpi(w2, "D1 MDE", f"±{c1['mde_abs'] * 100:.2f} pp", f"observed {fmt_pp(c1['abs_lift'])}",
-    help=f"Minimum detectable D1 change at {POWER0:.0%} power and α = {alpha:.2f} for this sample.")
-kpi(w3, "Median rounds, 30 vs 40", f"{rd['median_c']:.0f} vs {rd['median_t']:.0f}",
-    f"means {rd['mean_c']:.1f} vs {rd['mean_t']:.1f}")
-kpi(w4, "Rounds, Mann–Whitney", p_eq(rd["mw_p"]), "gate_40 vs gate_30",
-    help="Rank test comparing the whole distribution of rounds played, not just the median.")
-d7_vs = "larger" if abs(c7["abs_lift"]) >= c7["mde_abs"] else "smaller"
-d1_vs = ("larger than that" if abs(c1["abs_lift"]) >= c1["mde_abs"] else
-         "smaller than that, so 'not significant' on D1 means 'too small to measure with this sample', "
-         "not 'no effect'")
-play = ("no sign that the later gate bought extra play in the first 14 days" if rd["mw_p"] >= alpha else
-        "a small shift in how much people play, worth a look but not a reason to ship")
-takeaway(f"At {POWER0:.0%} power this sample can detect a D7 change of about ±{c7['mde_abs'] * 100:.2f} pp and a D1 "
-         f"change of about ±{c1['mde_abs'] * 100:.2f} pp. The D7 gap ({fmt_pp(c7['abs_lift'])}) is {d7_vs} than its "
-         f"bar; the D1 gap ({fmt_pp(c1['abs_lift'])}) is {d1_vs}. Rounds played barely move (median "
-         f"{rd['median_c']:.0f} vs {rd['median_t']:.0f}, {p_eq(rd['mw_p'])}): {play}.")
-
-# ---------------------------------------------------------------- engagement curve
-st.subheader("Where do players stop? Engagement by version")
-curve, chk = engagement()
-e1, e2 = st.columns(2)
-with e1:
-    show(separate_gate_labels(F.fig_engagement_curve(curve, "Share of players reaching at least N rounds (%)")),
-         key="p6_curve")
-    takeaway(CAT["ret_engagement_curve"])
-pre_sig = chk["pre_mw_p"] < ALPHA0
-if chk["pre_all_below"] and pre_sig:
-    pre_text = (f"Up to round {PRE_GATE_ROUNDS} no player can have reached a gate, so pre-gate play should look the "
-                f"same in both versions. It doesn't quite: gate_40's curve sits {abs(chk['pre_max']):.1f}–"
-                f"{abs(chk['pre_min']):.1f} pp lower there (Mann–Whitney on rounds capped at {PRE_GATE_ROUNDS}: "
-                f"{p_eq(chk['pre_mw_p'])}). The gate cannot cause that gap. Like the SRM warning, it suggests the "
-                "groups differ for reasons other than the gate.")
-else:
-    pre_text = (f"Up to round {PRE_GATE_ROUNDS}, before anyone can reach a gate, the two curves track each other "
-                f"(Mann–Whitney on rounds capped at {PRE_GATE_ROUNDS}: {p_eq(chk['pre_mw_p'])}).")
-post_text = (f" From round 41 on, gate_40 is slightly higher (by up to {chk['post_max']:.1f} pp), consistent with "
-             "players not being stopped at level 30." if chk["post_all_above"] else "")
-with e2:
-    show(gap_figure(curve, G["players"][T_ARM], G["players"][C_ARM]), key="p6_gap")
-    takeaway(pre_text + post_text)
+    parts_txt.append(f"at α = {alpha:.2f}")
+scope = (f"Headline (all players, α = {ALPHA0:.2f})" if is_headline else "This check (" + ", ".join(parts_txt) + ")")
+level = conf(alpha)
+d7_text = ci_verdict(c7, "D7", level)
+d1_text = ci_verdict(c1, "D1", level)
+if c1["abs_ci_high"] < 0 and not is_headline:
+    d1_text += ("; this is one of several cuts tried, so read it as consistent with a D1 drop rather than proof "
+                "of one")
+takeaway(f"{scope}: D7 {fmt_pp(c7['abs_lift'])} ({level} CI {pp_range(c7['abs_ci_low'], c7['abs_ci_high'])}) and D1 "
+         f"{fmt_pp(c1['abs_lift'])} ({level} CI {pp_range(c1['abs_ci_low'], c1['abs_ci_high'])}). {d7_text}; "
+         f"{d1_text}. None of these cuts fixes the imbalance, so even a CI that excludes 0 here is not a certified "
+         "gate effect.")
+st.caption(f"For reference, at {POWER0:.0%} power and α = {alpha:.2f} this subset can reliably detect D7 changes of "
+           f"about ±{c7['mde_abs'] * 100:.2f} pp and D1 changes of about ±{c1['mde_abs'] * 100:.2f} pp. The MDE "
+           "describes the design; whether a difference is distinguishable from 0 is read off its interval above.")
 
 # ---------------------------------------------------------------- decision
-st.subheader("Decision")
+st.subheader("5 · Decision")
+reach = NC["reached_30"]["retention_7"]
 with st.container(border=True):
-    why = (f"the SRM warning ({p_eq(SRM['p_value'])})"
-           + (" and the pre-gate play gap" if chk["pre_all_below"] and pre_sig else "")
-           + " mean the two groups may not be like-for-like")
     st.markdown(
-        "**Keep the first gate at level 30 (R5, Game PM).**\n\n"
-        f"- gate_40 measured {fmt_pp(g7['abs_lift'])} D7 retention (95% CI "
-        f"{pp_range(g7['abs_ci_low'], g7['abs_ci_high'])}): about {round(lost, -1):,.0f} fewer players still playing "
-        f"on Day 7 per {g7['n_t']:,} installs. D1 points the same way but is inconclusive ({fmt_pp(g1['abs_lift'])}, "
-        f"{p_eq(g1['p_value'])}).\n"
-        f"- Why the size is not certified: {why}. No change is the safe default, and nothing in the data suggests "
-        "gate_40 is better.\n"
-        "- **Next · Eng + Analytics:** debug assignment and logging before any re-test (bucketing code, how each "
-        "version was rolled out, install and crash logs by version).\n"
-        "- **If the team still wants a later gate:** re-run once assignment is fixed, with D7 as the primary metric, "
-        "D1 and rounds played as guardrails, and the sample sized for the smallest D7 change worth acting on "
-        "(calculator on page 7).")
+        "**Keep the first gate at level 30 (R5, Game PM). The result is not certified.**\n\n"
+        f"- **No sign of any benefit from gate_40.** Both retention estimates point down (naive D7 "
+        f"{fmt_pp(g7['abs_lift'])}, D1 {fmt_pp(g1['abs_lift'])}) and rounds played are unchanged "
+        f"({RD['mean_diff']:+.2f} on average). Keeping gate_30 is the status quo and costs nothing.\n"
+        f"- **The naive {fmt_pp(g7['abs_lift'])} overstates the likely effect.** gate_40 received about "
+        f"{WC['excess_players_gate_40']:,} extra low-engagement installs ({p_eq(SRM['p_value'])} on the split), and "
+        f"even players who never met a gate differ ({fmt_pp(ncr['abs_lift'])} D7). The part the gate could cause "
+        f"is about {fmt_pp(DEC['within_reached_30'])} per install (95% CI {pp_range(*dec_ci)}) and may be zero.\n"
+        "- **Next · Eng + Analytics:** fix assignment and logging first: bucketing code, how each version was "
+        "rolled out, install and crash logs by version.\n"
+        "- **Re-test only if the gate placement matters commercially.** Detecting the "
+        f"{fmt_pp(reach['abs_lift'])} seen among players who reach level 30 needs about "
+        f"{RT['reachers_needed_total_5050'] / 1e3:,.0f}K such players, roughly "
+        f"{RT['installs_needed_total_5050'] / 1e3:,.0f}K installs at 50/50, with D7 as the primary metric and D1 and "
+        "rounds played as guardrails (calculator on page 7).")
 
 n_boot = int(RES["config"]["n_bootstrap"])
-both_lower = g7["abs_lift"] < 0 and g1["abs_lift"] < 0
-d7_only = g7["p_value"] < ALPHA0 <= g1["p_value"]
-rates_line = (("gate_40 is lower on both. " if both_lower else "")
-              + ("Only the D7 gap is clearly larger than chance." if d7_only else ""))
-more_play = G["rounds"]["median_t"] > G["rounds"]["median_c"]
 how_to_read(f"""
 **Why the sample-ratio check comes first.** A test set to split users 50/50 should end up very close to 50/50.
 An imbalance bigger than chance allows means something in assignment or logging went wrong, for example one
-version losing users to a crash or a tracking bug. That can bias every metric on the page, so it is checked before
-anything else. Here the imbalance ({p_eq(SRM['p_value'])}) is past the {warn_thr:g} warning level but not the
-{SRM['threshold']:g} hard-fail level. The direction of the result is informative; its exact size is not certified.
+version gaining installs that were never really in the test. That can bias every metric on the page, so it is
+checked before anything else, on the raw assignment counts. Here the imbalance ({p_eq(SRM['p_value'])}) is past
+the {SRM['warn_threshold']:g} warning line but not the {SRM['threshold']:g} hard-fail line: the direction of the
+result is informative; its size is not certified.
 
-**Retention chart.** Share of players who came back 1 day (D1) and 7 days (D7) after installing, per version, with 95%
-confidence intervals. {rates_line}
+**Integrity checks.** Players who never reached level 30 never met either gate, and their play before level 30 cannot
+depend on the version. So any difference among them is a symptom of the imbalance, not an effect of the gate:
+- *Sample ratio by stratum.* The split is checked separately for players with fewer than 15, fewer than 30, and 30 or
+  more rounds. Only the low-engagement groups are out of balance.
+- *Engagement curve gap.* For each N, the gap between the versions in the share of players who played at least N
+  rounds. In the grey zone (before any gate) the versions are identical by design, so the curve should hug 0; it sits
+  below 0 (rounds capped at 29: mean {PG['mean_capped_29_c']:.2f} gate_30 vs {PG['mean_capped_29_t']:.2f} gate_40,
+  Mann–Whitney {p_eq(PG['mannwhitney_p'])}).
+- *Negative control.* The D7 difference among players who never met a gate. It should be 0; it isn't quite.
+- *Decomposition.* The bars add up to the naive D7 gap. Grey parts cannot be caused by the gate (different player mix,
+  players who never met a gate); the blue part is what the gate could have caused, with its 95% interval.
+- *Worst-case bound.* Even if every extra gate_40 player had never returned, gate_40's D7 would still be
+  {abs(WC['d7_diff_if_excess_removed']) * 100:.2f} pp lower: no reading of the data shows the later gate helping.
 
-**Bootstrap chart.** We re-simulated the experiment {n_boot:,} times from the observed data and plotted the
-gate_40 − gate_30 difference each time. {1 - g7['boot_share_ge_0']:.1%} of the D7 draws are below 0, against
-{1 - g1['boot_share_ge_0']:.1%} of the D1 draws: the D7 drop is consistent, while the D1 distribution still overlaps 0.
+**Retention and bootstrap charts.** Share of players who came back on Day 1 (D1) and Day 7 (D7) after installing, per
+version, with 95% intervals, and {n_boot:,} re-simulations of each difference. Both are the naive comparison, so they
+carry the imbalance with them.
 
-**Sensitivity panel.** It re-runs the comparison under other reasonable choices: a stricter α, leaving out players who
-never played, dropping heavy players. If the conclusion holds across all of them, it is not an artifact of one
-choice. Do not hunt for the filter that gives the answer you like: that is p-hacking. Filtering on rounds played
-also uses something measured after assignment, which is fine as a robustness check but not as the main estimate.
+**Guardrails.** The case for a later gate is that players would play more before hitting it; rounds played say they
+don't. D1 is the earliest retention signal; its interval still allows a drop of about
+{abs(g1['abs_ci_low']) * 100:.1f} pp.
 
-**MDE (minimum detectable effect).** The smallest difference this sample could reliably detect. The D1 gap
-({fmt_pp(g1['abs_lift'])}) is smaller than the D1 MDE (±{g1['mde']['mde_abs'] * 100:.2f} pp). "Not significant" there
-means "too small to measure here", not "no effect".
-
-**Rounds guardrail.** The case for a later gate is that players would play more before hitting it. If that were
-happening, gate_40 would show more rounds played. {"It does" if more_play else "It doesn't"} (median
-{G['rounds']['median_c']:.0f} rounds for gate_30 vs {G['rounds']['median_t']:.0f} for gate_40).
-
-**Engagement curve.** For each N, the share of players who played at least N rounds. The dotted lines mark the two gate
-positions. Before round 30 the two versions are identical (nobody has met a gate yet), so any gap there is a warning
-sign about the groups, not an effect of the gate.
+**Sensitivity panel.** It re-runs the naive comparison under other reasonable choices: a stricter α, leaving out
+players who never played, dropping heavy players. Do not hunt for the filter that gives the answer you like: that is
+p-hacking. Filtering on rounds played also uses something measured after assignment, which is fine as a robustness
+check but not as the main estimate. Every "lower / inconclusive" statement is read off the interval shown with it.
 
 **Common misreadings.**
-- "D1 isn't significant, so D1 is unaffected." The test can't see a gap that small. Look at the interval.
-- "p = {SRM['p_value']:.4f} on the SRM is fine." For a sample-ratio check that is a red flag, not a pass.
-- "{fmt_pp(g7['abs_lift'])} is tiny." In relative terms it is {abs(g7['rel_lift']):.1%} fewer D7-retained players,
-  about {round(lost, -1):,.0f} people per {g7['n_t'] / 1e3:.0f}K installs.
-- "Players who reach round 30 retain much better, so push everyone to round 30." That is correlation: engaged players
-  both play more and come back more.
+- "gate_40 costs {abs(g7['abs_lift']) * 100:.2f} pp of D7." That is the naive gap, and part of it comes from extra
+  low-engagement players and from players who never met a gate. The part the gate could cause is about
+  {abs(DEC['within_reached_30']) * 100:.2f} pp per install, and may be zero.
+- "{p_eq(SRM['p_value'])} on the SRM is fine." For a sample-ratio check that is a warning sign, not a pass.
+- "D1 isn't significant, so D1 is unaffected." The interval allows a D1 drop of up to
+  {abs(g1['abs_ci_low']) * 100:.1f} pp.
+- "Players who reach round 30 retain much better, so push everyone to round 30." Rounds are counted over 14 days and
+  overlap the Day-7 window, so engaged players both play more and come back more: correlation, not a lever.
 """)

@@ -20,10 +20,19 @@
 --             python -m src.sql_check sql/07_gate_experiment.sql   (print this result)
 --             python -m src.sql_check                              (run every file + reconcile)
 --             duckdb -c ".read sql/07_gate_experiment.sql"         (DuckDB CLI)
--- Notes   : - Read 03_srm_check.sql first: this experiment has an SRM WARNING
---             (arm sizes deviate from 50/50 at p < 0.01, though not at the
---             strict p < 0.001 flag). The direction of the result is informative,
---             but the readout cannot be certified until assignment is investigated.
+-- Notes   : - Read 03_srm_check.sql and 09_gate_integrity.sql first. The 50/50 SRM
+--             check on raw assignment counts returns a WARNING; gate_40's extra
+--             players are concentrated among players with very few rounds; and
+--             players who never reached level 30, who met no gate, also differ in
+--             D7. So this readout is NOT certified, and the naive abs_diff below
+--             overstates what the gate itself could have caused: 09 splits it into
+--             player mix, a difference among players who met no gate, and the part
+--             among players who could meet the gate.
+--           - Players per arm are the analysis population (05_stg_cookie_cats.sql:
+--             one gate_30 outlier excluded), so players_gate_30 is one lower than
+--             the raw count used in the SRM check.
+--           - D1 is a guardrail: read its CI as the size of D1 drop that cannot be
+--             ruled out, not as proof of "no effect".
 --           - p-values, Newcombe CIs, the bootstrap and the MDE are computed in
 --             src/stats.py (DuckDB has no normal CDF).
 -- =============================================================================

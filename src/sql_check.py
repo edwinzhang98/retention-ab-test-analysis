@@ -8,15 +8,22 @@ outputs with reports/results.json, reports/tables/*.csv and a pandas
 re-computation from src.data. SQL and pandas are two independent implementations
 of the same metric definitions, so agreement is evidence that both are right.
 
+DuckDB has no normal or chi-square CDF, so the SQL stops at test statistics. For
+the heterogeneity decisions, this module turns the SQL z statistics into p-values,
+applies the same multiple-comparison corrections as the pipeline (src.stats) and
+checks that the resulting counts match results.json.
+
 Output
   reports/tables/sql_reconciliation.csv, one row per check:
     check, sql_value, python_value, abs_diff, match, tolerance, sql_file, python_source
-  Raises ReconciliationError (after writing the CSV) if any check fails.
+  Numbers must agree within the tolerance; labels (statuses, segment names) must
+  agree exactly. Raises ReconciliationError (after writing the CSV) if any check
+  fails, and before that if a SQL file has no reconciler or a reconciled file is missing.
 
 Usage, from the repo root
   python -m src.sql_check                                  run every file + reconcile
   python -m src.sql_check sql/02_conversion_by_group.sql   run one file and print its result
-  python -m src.sql_check 02 07                            same, by number prefix
+  python -m src.sql_check 02 09                            same, by number prefix
 """
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
+from scipy import stats as sps
 
 from . import config as C
 from . import data as D
@@ -52,13 +60,28 @@ TOL_FULL = 1e-9
 TABLE_KEYS = {
     "ad_lift_by_most_ads_day": "most_ads_day",
     "ad_lift_by_most_ads_hour": "most_ads_hour",
+    "ad_lift_by_daypart": "daypart",
     "ad_lift_by_exposure_bucket": "exposure_bucket",
     "retention_by_rounds_bucket": "rounds_bucket",
     "retention_by_d1_status": "d1_status",
     "retention_by_version": "version",
 }
+HET_DIMS = ("most_ads_day", "most_ads_hour", "daypart", "exposure_bucket")
+# Multiple-comparison methods in results.json, with the names used in check labels
+ADJ_METHODS = {"none": "unadjusted", "bonferroni": "Bonferroni", "holm": "Holm", "fdr_bh": "BH"}
+# Exposure buckets behind the concentration figures, as in src.analysis.ad_experiment
+LIGHT_BUCKETS = ["1-5", "6-10", "11-20"]       # 20 ads or fewer
+HEAVY_BUCKETS = ["36-50", "51-100", "101-200"]
 # Same minimum segment size as src.retention.gap_by_dimension
 GAP_MIN_PLAYERS = 500
+# Rows of sql/09_gate_integrity.sql: (stratum, key in cookie.gate.srm_by_stratum,
+# key in cookie.gate.negative_control and d7_decomposition.detail)
+GATE_STRATA = (
+    ("All players", None, None),
+    ("Rounds < 15", "rounds_lt_15", None),
+    ("Rounds < 30", "rounds_lt_30", "never_reached_30"),
+    ("Rounds >= 30", "rounds_ge_30", "reached_30"),
+)
 
 
 class ReconciliationError(RuntimeError):
@@ -135,19 +158,28 @@ def _plain(x, as_count: bool = False):
     return x
 
 
+def _p_from_z(z) -> np.ndarray:
+    """Two-sided normal p-values for z statistics computed in SQL."""
+    return 2 * sps.norm.sf(np.abs(np.asarray(z, dtype=float)))
+
+
 class _Checks:
     def __init__(self) -> None:
         self.rows: list[dict] = []
 
     def add(self, check: str, sql_file: str, sql_value, python_source: str, python_value,
             tol: float = TOL_EXACT) -> None:
-        s, p = _to_float(sql_value), _to_float(python_value)
-        if math.isnan(s) and math.isnan(p):
-            diff, ok = 0.0, True  # both undefined, e.g. a relative lift on a zero baseline
+        if isinstance(sql_value, str) or isinstance(python_value, str):
+            ok = str(sql_value) == str(python_value)  # labels: exact text match
+            diff = 0.0 if ok else math.nan
         else:
-            diff = abs(s - p)  # NaN when only one side is missing -> no match
-            ok = diff <= tol
-        as_count = tol == TOL_EXACT  # exact checks are counts or flags
+            s, p = _to_float(sql_value), _to_float(python_value)
+            if math.isnan(s) and math.isnan(p):
+                diff, ok = 0.0, True  # both undefined, e.g. a relative lift on a zero baseline
+            else:
+                diff = abs(s - p)  # NaN when only one side is missing -> no match
+                ok = diff <= tol
+        as_count = tol == TOL_EXACT  # exact checks are counts, flags or labels
         self.rows.append({"check": check, "sql_value": _plain(sql_value, as_count),
                           "python_value": _plain(python_value, as_count),
                           "abs_diff": diff, "match": bool(ok), "tolerance": tol,
@@ -205,6 +237,7 @@ def _stg_marketing(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
 def _conversion(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     r, a = sql.iloc[0], py["res"]["ad"]
     t, b = a["test"], a["business"]
+    hold = b["always_on_holdout_cost"]
     for check, col, key, value, tol in [
         ("users (ad)", "users_ad", "test.n_t", t["n_t"], TOL_EXACT),
         ("users (psa)", "users_psa", "test.n_c", t["n_c"], TOL_EXACT),
@@ -225,8 +258,16 @@ def _conversion(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
          b["incremental_conversions"]["point"], TOL_JSON),
         ("incremental share of ad conversions", "incremental_share_of_ad_conversions",
          "business.share_of_ad_conversions_incremental", b["share_of_ad_conversions_incremental"], TOL_JSON),
+        ("last-touch overstatement (x)", "last_touch_overstatement_x", "business.last_touch_overstatement_x",
+         b["last_touch_overstatement_x"], TOL_JSON),
         ("breakeven CPM in USD (assumed value per conversion)", "breakeven_cpm_usd", "business.breakeven_cpm_usd.point",
          b["breakeven_cpm_usd"]["point"], TOL_JSON),
+        ("always-on holdout: users", "holdout_users", "business.always_on_holdout_cost.users_per_588k_flight",
+         hold["users_per_588k_flight"], TOL_JSON),
+        ("always-on holdout: conversions forgone", "holdout_conversions_forgone",
+         "business.always_on_holdout_cost.conversions_forgone", hold["conversions_forgone"], TOL_JSON),
+        ("always-on holdout: value forgone in USD (assumed value per conversion)", "holdout_value_forgone_usd",
+         "business.always_on_holdout_cost.value_forgone_usd", hold["value_forgone_usd"], TOL_JSON),
     ]:
         ck.add(f"ad readout: {check}", f, r[col], f"results.json ad.{key}", value, tol)
 
@@ -235,37 +276,133 @@ def _srm(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     rows = sql.set_index("experiment")
     for exp, srm, key in (("marketing_ab", py["res"]["ad"]["srm"], "ad.srm"),
                           ("cookie_cats", py["res"]["cookie"]["gate"]["srm"], "cookie.gate.srm")):
-        r, j = rows.loc[exp], f"results.json {key}."
-        ck.add(f"SRM {exp}: n treatment", f, r["n_treatment"], j + "n_t", srm["n_t"])
-        ck.add(f"SRM {exp}: n control", f, r["n_control"], j + "n_c", srm["n_c"])
-        ck.add(f"SRM {exp}: intended treatment share", f, r["intended_treatment_share"], j + "intended_share_t",
+        r, j, lbl = rows.loc[exp], f"results.json {key}.", f"SRM {exp}"
+        ck.add(f"{lbl}: n treatment", f, r["n_treatment"], j + "n_t", srm["n_t"])
+        ck.add(f"{lbl}: n control", f, r["n_control"], j + "n_c", srm["n_c"])
+        ck.add(f"{lbl}: intended treatment share", f, r["intended_treatment_share"], j + "intended_share_t",
                srm["intended_share_t"], TOL_JSON)
-        ck.add(f"SRM {exp}: expected treatment", f, r["expected_treatment"], j + "expected_t", srm["expected_t"], TOL_JSON)
-        ck.add(f"SRM {exp}: chi-square statistic", f, r["chi2_stat"], j + "chi2", srm["chi2"], TOL_JSON)
-        ck.add(f"SRM {exp}: flag (p < 0.001)", f, r["srm_flag_p_lt_0_001"],
-               j + f"flag (threshold {srm['threshold']})", srm["flag"])
-        warn = srm.get("warn_threshold", 0.01)  # older results.json files have no warn_threshold
-        ck.add(f"SRM {exp}: warning (p < 0.01)", f, r["srm_warning_p_lt_0_01"],
-               j + f"p_value < warn_threshold ({warn})", srm["p_value"] < warn)
+        ck.add(f"{lbl}: observed treatment share", f, r["observed_treatment_share"], j + "observed_share_t",
+               srm["observed_share_t"], TOL_JSON)
+        ck.add(f"{lbl}: expected treatment", f, r["expected_treatment"], j + "expected_t", srm["expected_t"], TOL_JSON)
+        ck.add(f"{lbl}: chi-square statistic", f, r["chi2_stat"], j + "chi2", srm["chi2"], TOL_JSON)
+        ck.add(f"{lbl}: p < 0.001", f, r["p_below_0_001"],
+               j + f"p_value < threshold ({srm['threshold']})", srm["p_value"] < srm["threshold"])
+        ck.add(f"{lbl}: p < 0.01", f, r["p_below_0_01"],
+               j + f"p_value < warn_threshold ({srm['warn_threshold']})", srm["p_value"] < srm["warn_threshold"])
+        ck.add(f"{lbl}: status", f, r["srm_status"], j + "status", srm["status"])
+
+        # Quota exactness: results.json stores it for the ad split; for the gate split,
+        # recompute it with the pipeline's function on the results.json counts.
+        if "deviation_users" in srm:
+            q, qsrc = srm, j
+        else:
+            q = S.quota_exactness(srm["n_t"], srm["n_c"], srm["intended_share_t"])
+            qsrc = "src.stats.quota_exactness on the results.json counts: "
+        ck.add(f"{lbl}: deviation from target (users)", f, r["deviation_users"], qsrc + "deviation_users",
+               q["deviation_users"], TOL_JSON)
+        ck.add(f"{lbl}: SD of the deviation under random assignment (users)", f,
+               r["sd_users_under_random_assignment"], qsrc + "sd_users_under_random_assignment",
+               q["sd_users_under_random_assignment"], TOL_JSON)
+        ck.add(f"{lbl}: split is the nearest integer to target", f, r["is_nearest_integer_to_target"],
+               qsrc + "is_nearest_integer_to_target", q["is_nearest_integer_to_target"])
+        if q["is_nearest_integer_to_target"]:
+            ck.add(f"{lbl}: probability random assignment lands exactly there", f,
+                   r["prob_exactly_nearest_integer"], qsrc + "prob_exactly_nearest_integer",
+                   q["prob_exactly_nearest_integer"], TOL_JSON)
+        else:
+            ck.add(f"{lbl}: probability column is NULL (split not on target)", f,
+                   r["prob_exactly_nearest_integer"], "expected: NULL", None)
 
 
 def _segment_lifts(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
-    het = py["res"]["ad"]["heterogeneity"]
+    het, alpha = py["res"]["ad"]["heterogeneity"], py["res"]["ad"]["test"]["alpha"]
     count_cols = (("users_ad", "n_t"), ("users_psa", "n_c"), ("conversions_ad", "conv_t"), ("conversions_psa", "conv_c"))
-    for dim in ("most_ads_day", "most_ads_hour", "exposure_bucket"):
+    contrast_cols = (("lift_rest", "lift_rest"), ("diff_vs_rest", "diff_vs_rest"),
+                     ("diff_vs_rest_ci95_low", "diff_vs_rest_ci_low"), ("diff_vs_rest_ci95_high", "diff_vs_rest_ci_high"))
+    for dim in HET_DIMS:
         table = f"ad_lift_by_{dim}"
         s, p = sql[sql["dimension"] == dim].set_index("segment"), py["tables"][table].set_index(dim)
+        h, jh, lbl = het[dim], f"results.json ad.heterogeneity.{dim}.", f"lift by {dim}"
         src, common = f"reports/tables/{table}.csv", p.index.intersection(s.index)
-        same_counts = sum(all(s.at[k, a] == p.at[k, b] for a, b in count_cols) for k in common)
-        same_z = sum(abs(s.at[k, "z_stat"] - p.at[k, "z"]) <= TOL_FULL for k in common)
-        ck.add(f"lift by {dim}: segments", f, len(s), src, len(p))
-        ck.add(f"lift by {dim}: segments with identical users and conversions per arm", f, same_counts, src, len(p))
-        ck.add(f"lift by {dim}: segments with matching z statistic", f, same_z, src, len(p))
-        ck.add(f"lift by {dim}: segments significant at 5% before correction", f,
-               int(s["significant_unadjusted"].sum()), f"results.json ad.heterogeneity.{dim}.n_sig_unadjusted",
-               het[dim]["n_sig_unadjusted"])
+        p_lift = pd.Series(_p_from_z(s["z_stat"]), index=s.index)
+        p_rest = pd.Series(_p_from_z(s["z_vs_rest"]), index=s.index)
+
+        # segment-level agreement with the Python table
+        ck.add(f"{lbl}: segments", f, len(s), jh + "n_segments", h["n_segments"])
+        ck.add(f"{lbl}: segments with identical users and conversions per arm", f,
+               sum(all(s.at[k, a] == p.at[k, b] for a, b in count_cols) for k in common), src, len(p))
+        ck.add(f"{lbl}: segments with matching z statistic (lift != 0)", f,
+               sum(abs(s.at[k, "z_stat"] - p.at[k, "z"]) <= TOL_FULL for k in common), src, len(p))
+        ck.add(f"{lbl}: segments with matching contrast vs the other segments (lift_rest, diff, CI)", f,
+               sum(all(abs(s.at[k, a] - p.at[k, b]) <= TOL_FULL for a, b in contrast_cols) for k in common), src, len(p))
+        ck.add(f"{lbl}: segments with matching p-value vs the other segments (from SQL z_vs_rest)", f,
+               sum(abs(p_rest[k] - p.at[k, "p_vs_rest"]) <= TOL_FULL for k in common), src + " p_vs_rest", len(p))
+
+        # decisions: unadjusted flags straight from SQL; corrected ones = SQL z -> src.stats.adjust_pvalues
+        for method, name in ADJ_METHODS.items():
+            if method == "none":
+                n_lift = int(s["lift_significant_unadjusted"].sum())
+                n_diff = int(s["differs_from_rest_unadjusted"].sum())
+            else:
+                n_lift = int((S.adjust_pvalues(p_lift, method) < alpha).sum())
+                n_diff = int((S.adjust_pvalues(p_rest, method) < alpha).sum())
+            ck.add(f"{lbl}: segments with lift != 0, {name}", f, n_lift,
+                   jh + f"lift_positive.{method}", h["lift_positive"][method])
+            ck.add(f"{lbl}: segments whose lift differs from the other segments, {name}", f, n_diff,
+                   jh + f"differs_from_rest.{method}", h["differs_from_rest"][method])
+        differs_holm = S.adjust_pvalues(p_rest, "holm") < alpha
+        ck.add(f"{lbl}: segments that differ from the other segments after Holm", f,
+               ", ".join(s.index[differs_holm]), jh + "segments_differing_holm", ", ".join(h["segments_differing_holm"]))
+
+        # descriptive extremes, sparsity and the stratified sensitivity check
+        ck.add(f"{lbl}: segment with the largest lift", f, str(s["abs_lift"].idxmax()), jh + "max_lift_segment",
+               h["max_lift_segment"])
+        ck.add(f"{lbl}: largest lift (pp)", f, s["abs_lift"].max() * 100, jh + "max_lift_pp", h["max_lift_pp"], TOL_JSON)
+        ck.add(f"{lbl}: segment with the smallest lift", f, str(s["abs_lift"].idxmin()), jh + "min_lift_segment",
+               h["min_lift_segment"])
+        ck.add(f"{lbl}: smallest lift (pp)", f, s["abs_lift"].min() * 100, jh + "min_lift_pp", h["min_lift_pp"], TOL_JSON)
+        ck.add(f"{lbl}: fewest PSA users in a segment", f, int(s["users_psa"].min()), jh + "min_control_users",
+               h["min_control_users"])
+        ck.add(f"{lbl}: segments with 0 PSA conversions", f, int((s["conversions_psa"] == 0).sum()),
+               jh + "segments_with_zero_control_conversions", h["segments_with_zero_control_conversions"])
+        ck.add(f"{lbl}: one standardized lift per dimension", f, s["standardized_lift"].nunique(),
+               "expected: the same value on every row", 1)
+        ck.add(f"{lbl}: standardized (Mantel-Haenszel) lift", f, s["standardized_lift"].iloc[0],
+               jh + "sensitivity_stratified.mh_risk_diff", h["sensitivity_stratified"]["mh_risk_diff"], TOL_JSON)
         for k in p.index:
-            ck.add(f"lift by {dim} = {k}: absolute lift", f, s["abs_lift"].get(k), src, p.at[k, "abs_lift"], TOL_FULL)
+            ck.add(f"{lbl} = {k}: absolute lift", f, s["abs_lift"].get(k), src, p.at[k, "abs_lift"], TOL_FULL)
+            ck.add(f"{lbl} = {k}: lift minus the other segments' lift", f, s["diff_vs_rest"].get(k), src,
+                   p.at[k, "diff_vs_rest"], TOL_FULL)
+
+    # daypart: the Night cell behind the daypart interaction test
+    night = sql[(sql["dimension"] == "daypart") & (sql["segment"] == C.DAYPART_ORDER[0])].iloc[0]
+    jn = "results.json ad.heterogeneity.daypart.night_counts."
+    for arm, col_arm in (("ad", "ad"), ("psa", "psa")):
+        for key, col in (("users", f"users_{col_arm}"), ("conversions", f"conversions_{col_arm}")):
+            ck.add(f"daypart {C.DAYPART_ORDER[0]}: {key} ({arm})", f, night[col], jn + f"{arm}.{key}",
+                   het["daypart"]["night_counts"][arm][key])
+
+    # exposure: each arm's mix across buckets (exposure parity) and where the lift lives
+    e, je = sql[sql["dimension"] == "exposure_bucket"].set_index("segment"), "results.json ad.heterogeneity.exposure_bucket."
+    for bucket, share in het["exposure_bucket"]["arm_shares"].items():
+        ck.add(f"exposure bucket {bucket}: share of ad users", f, e.at[bucket, "share_of_arm_ad"],
+               je + f"arm_shares[{bucket}].ad", share["ad"], TOL_JSON)
+        ck.add(f"exposure bucket {bucket}: share of PSA users", f, e.at[bucket, "share_of_arm_psa"],
+               je + f"arm_shares[{bucket}].psa", share["psa"], TOL_JSON)
+    conc, jc = het["exposure_bucket"]["concentration"], je + "concentration."
+    users = e["users_ad"] + e["users_psa"]
+    for check, value, key, tol in (
+        ("share of users with 20 ads or fewer", users[LIGHT_BUCKETS].sum() / users.sum(), "share_users_le_20_ads", TOL_JSON),
+        ("share of ad users with 36-200 ads", e.loc[HEAVY_BUCKETS, "users_ad"].sum() / e["users_ad"].sum(),
+         "share_ad_users_36_200", TOL_JSON),
+        ("share of incremental conversions from 36-200 ads",
+         e.loc[HEAVY_BUCKETS, "incremental_conversions"].sum() / e["incremental_conversions"].sum(),
+         "share_incremental_conversions_36_200", TOL_JSON),
+        ("PSA conversion rate in the lowest bucket", e["conversion_rate_psa"].iloc[0], "control_rate_lowest_bucket", TOL_JSON),
+        ("PSA conversion rate in the highest bucket", e["conversion_rate_psa"].iloc[-1], "control_rate_highest_bucket", TOL_JSON),
+        ("PSA users in the highest bucket", e["users_psa"].iloc[-1], "top_bucket_control_users", TOL_EXACT),
+    ):
+        ck.add(f"exposure: {check}", f, value, jc + key, conc[key], tol)
 
 
 def _stg_cookie(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
@@ -341,10 +478,104 @@ def _gate(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ck.add(f"gate {label}: 95% Wald CI high", f, r["abs_diff_ci95_high"], src, hi, TOL_FULL)
 
 
+def _gate_integrity(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
+    gate, c = py["res"]["cookie"]["gate"], py["c_clean"]
+    rows, j = sql.set_index("stratum"), "results.json cookie.gate."
+    ck.add("gate integrity: rows (all players + 3 pre-gate strata)", f, len(rows), "expected", len(GATE_STRATA))
+
+    # Step 1 - SRM by stratum, raw assignment counts
+    for stratum, srm_key, _ in GATE_STRATA:
+        srm, key = (gate["srm"], "srm") if srm_key is None else (gate["srm_by_stratum"][srm_key],
+                                                                  f"srm_by_stratum.{srm_key}")
+        r, lbl = rows.loc[stratum], f"gate integrity {stratum}"
+        ck.add(f"{lbl}: assigned gate_40", f, r["assigned_gate_40"], j + f"{key}.n_t", srm["n_t"])
+        ck.add(f"{lbl}: assigned gate_30", f, r["assigned_gate_30"], j + f"{key}.n_c", srm["n_c"])
+        ck.add(f"{lbl}: SRM chi-square", f, r["srm_chi2"], j + f"{key}.chi2", srm["chi2"], TOL_JSON)
+        ck.add(f"{lbl}: SRM status", f, r["srm_status"], j + f"{key}.status", srm["status"])
+    ck.add("gate integrity: extra gate_40 players with < 15 rounds", f, rows.at["Rounds < 15", "extra_gate_40"],
+           j + "excess_players_with_lt_15_rounds", gate["excess_players_with_lt_15_rounds"])
+
+    # Step 2 - D7 by stratum and version, analysis population
+    d7 = {"All players": ("retention_7", gate["retention_7"])}
+    for stratum, _, nc_key in GATE_STRATA:
+        if nc_key:
+            d7[stratum] = (f"negative_control.{nc_key}.retention_7", gate["negative_control"][nc_key]["retention_7"])
+    for stratum, (key, g) in d7.items():
+        r, lbl, src = rows.loc[stratum], f"gate integrity {stratum}", j + f"{key}."
+        for check, col, k, tol in (
+            ("players gate_40", "players_gate_40", "n_t", TOL_EXACT),
+            ("players gate_30", "players_gate_30", "n_c", TOL_EXACT),
+            ("D7 retained gate_40", "d7_retained_gate_40", "conv_t", TOL_EXACT),
+            ("D7 retained gate_30", "d7_retained_gate_30", "conv_c", TOL_EXACT),
+            ("D7 rate gate_40", "d7_rate_gate_40", "rate_t", TOL_JSON),
+            ("D7 rate gate_30", "d7_rate_gate_30", "rate_c", TOL_JSON),
+            ("D7 difference", "d7_diff", "abs_lift", TOL_JSON),
+            ("D7 pooled z statistic", "d7_z", "z", TOL_JSON),
+        ):
+            ck.add(f"{lbl}: {check}", f, r[col], src + k, g[k], tol)
+        lo, hi = S.wald_diff_ci(g["conv_t"], g["n_t"], g["conv_c"], g["n_c"], alpha=C.ALPHA)
+        wsrc = "src.stats.wald_diff_ci on the results.json counts"
+        ck.add(f"{lbl}: D7 95% Wald CI low", f, r["d7_diff_ci95_low"], wsrc, lo, TOL_FULL)
+        ck.add(f"{lbl}: D7 95% Wald CI high", f, r["d7_diff_ci95_high"], wsrc, hi, TOL_FULL)
+    # the drill-down row is not in results.json: re-compute it in pandas
+    low, psrc = c[c["sum_gamerounds"] < 15], "pandas: src.data.clean_cookie(raw CSV), rounds < 15"
+    for arm in ("gate_40", "gate_30"):
+        a = low[low["version"] == arm]
+        ck.add(f"gate integrity Rounds < 15: players {arm}", f, rows.at["Rounds < 15", f"players_{arm}"], psrc, len(a))
+        ck.add(f"gate integrity Rounds < 15: D7 retained {arm}", f, rows.at["Rounds < 15", f"d7_retained_{arm}"],
+               psrc, int(a["retention_7"].sum()))
+        ck.add(f"gate integrity Rounds < 15: share of {arm} players", f, rows.at["Rounds < 15", f"share_of_arm_{arm}"],
+               psrc, len(a) / int((c["version"] == arm).sum()), TOL_FULL)
+
+    # Step 3 - decomposition of the naive D7 gap
+    dec, jd = gate["d7_decomposition"], j + "d7_decomposition."
+    for stratum, _, key in GATE_STRATA:
+        if key is None:
+            continue
+        d, r, lbl = dec["detail"][key], rows.loc[stratum], f"gate integrity {stratum}"
+        for check, col, k in (("share of gate_40 players", "share_of_arm_gate_40", "w_t"),
+                              ("share of gate_30 players", "share_of_arm_gate_30", "w_c"),
+                              ("D7 gap within term", "d7_within_term", "within"),
+                              ("D7 gap composition term", "d7_composition_term", "composition")):
+            ck.add(f"{lbl}: {check}", f, r[col], jd + f"detail.{key}.{k}", d[k], TOL_JSON)
+    tot, reach = rows.loc["All players"], rows.loc["Rounds >= 30"]
+    ck.add("gate integrity: naive D7 gap", f, tot["d7_diff"], jd + "naive_diff", dec["naive_diff"], TOL_JSON)
+    ck.add("gate integrity: D7 gap from player mix (composition)", f, tot["d7_composition_term"], jd + "composition",
+           dec["composition"], TOL_JSON)
+    ck.add("gate integrity: D7 gap within strata (both strata)", f, tot["d7_within_term"],
+           jd + "within_never_reached_30 + within_reached_30",
+           dec["within_never_reached_30"] + dec["within_reached_30"], 2 * TOL_JSON)  # sum of two rounded values
+    ck.add("gate integrity: within + composition = naive D7 gap", f,
+           tot["d7_within_term"] + tot["d7_composition_term"], jd + "naive_diff", dec["naive_diff"], TOL_JSON)
+    ck.add("gate integrity: average share of players who reached level 30", f,
+           (reach["share_of_arm_gate_40"] + reach["share_of_arm_gate_30"]) / 2, jd + "share_reached_30",
+           dec["share_reached_30"], TOL_JSON)
+    ck.add("gate integrity: install-level effect if only players who reach the gate are affected", f,
+           reach["d7_within_term"], jd + "install_level_effect_if_only_reachers",
+           dec["install_level_effect_if_only_reachers"], TOL_JSON)
+    # results.json scales the Newcombe CI; the SQL scales the Wald CI -> compare with the same formula
+    g = gate["negative_control"]["reached_30"]["retention_7"]
+    w = (g["n_t"] / gate["players"]["gate_40"] + g["n_c"] / gate["players"]["gate_30"]) / 2
+    lo, hi = S.wald_diff_ci(g["conv_t"], g["n_t"], g["conv_c"], g["n_c"], alpha=C.ALPHA)
+    wsrc = "average share x src.stats.wald_diff_ci on the results.json counts"
+    ck.add("gate integrity: install-level effect, 95% CI low", f, reach["d7_within_ci95_low"], wsrc, w * lo, TOL_FULL)
+    ck.add("gate integrity: install-level effect, 95% CI high", f, reach["d7_within_ci95_high"], wsrc, w * hi, TOL_FULL)
+
+    # Worst case for the SRM: gate_40's extra players all never returned
+    wc, jw = gate["worst_case_bound"], j + "worst_case_bound."
+    ck.add("gate integrity: extra gate_40 players (analysis population)", f,
+           tot["players_gate_40"] - tot["players_gate_30"], jw + "excess_players_gate_40", wc["excess_players_gate_40"])
+    ck.add("gate integrity: D7 gap if the extra gate_40 players never returned", f,
+           tot["d7_diff_if_extra_never_returned"], jw + "d7_diff_if_excess_removed", wc["d7_diff_if_excess_removed"],
+           TOL_JSON)
+
+
 def _data_quality(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
     dqm, dqc = py["res"]["data_quality"]["marketing"], py["res"]["data_quality"]["cookie"]
     m_raw, c_raw = py["m_raw"], py["c_raw"]
     jm, jc, pdx = "results.json data_quality.marketing.", "results.json data_quality.cookie.", "pandas on the raw CSV"
+    zero = py["tables"]["retention_by_rounds_bucket"].set_index("rounds_bucket").loc["0"]
+    jz = "reports/tables/retention_by_rounds_bucket.csv: players x "
     observed = sql.set_index(["dataset", "check_name"])["observed_value"]
     expected = [
         ("marketing_ab", "rows", jm + "rows_raw", dqm["rows_raw"], TOL_EXACT),
@@ -370,6 +601,10 @@ def _data_quality(ck: _Checks, f: str, sql: pd.DataFrame, py: dict) -> None:
         ("cookie_cats", "sum_gamerounds_p999", jc + "rounds_p999", dqc["rounds_p999"], TOL_JSON),
         ("cookie_cats", "sum_gamerounds_max", jc + "rounds_max_raw", dqc["rounds_max_raw"], TOL_EXACT),
         ("cookie_cats", "zero_round_players", jc + "zero_round_players", dqc["zero_round_players"], TOL_EXACT),
+        ("cookie_cats", "zero_round_players_flagged_d1", jz + "retention_1 (bucket 0)",
+         int(round(zero["players"] * zero["retention_1"])), TOL_EXACT),
+        ("cookie_cats", "zero_round_players_flagged_d7", jz + "retention_7 (bucket 0)",
+         int(round(zero["players"] * zero["retention_7"])), TOL_EXACT),
         ("cookie_cats", "players_over_10000_rounds", jc + "outliers_dropped (count)", len(dqc["outliers_dropped"]),
          TOL_EXACT),
         ("cookie_cats", "rows_after_outlier_exclusion", jc + "rows_clean", dqc["rows_clean"], TOL_EXACT),
@@ -398,6 +633,7 @@ RECONCILERS: dict[str, Callable[[_Checks, str, pd.DataFrame, dict], None]] = {
     "06_retention_by_segment.sql": _retention,
     "07_gate_experiment.sql": _gate,
     "08_data_quality_checks.sql": _data_quality,
+    "09_gate_integrity.sql": _gate_integrity,
 }
 
 
@@ -405,6 +641,9 @@ def reconcile(outputs: dict[str, pd.DataFrame], py: dict) -> pd.DataFrame:
     missing = [name for name in RECONCILERS if name not in outputs]
     if missing:
         raise ReconciliationError(f"SQL file(s) expected in sql/ but not found: {missing}")
+    unchecked = [name for name in outputs if name not in RECONCILERS]
+    if unchecked:
+        raise ReconciliationError(f"SQL file(s) without a reconciler in src/sql_check.py: {unchecked}")
     ck = _Checks()
     for name, check_file in RECONCILERS.items():
         try:
@@ -439,16 +678,18 @@ def run_and_reconcile(verbose: bool = True) -> pd.DataFrame:
 
 
 def preview(name: str | Path, max_rows: int = 40) -> None:
-    """Print one SQL file's result: one line per column for 1-3 row results, a table otherwise."""
+    """Print one SQL file's result: one line per column when there are only a few
+    rows (e.g. one per experiment or stratum), a table otherwise."""
     path = resolve_sql_path(name)
     df = run_sql_file(path)
     print(f"-- {_shown(path)}: {len(df):,} rows x {df.shape[1]} columns")
-    if len(df) == 1:
-        print(df.T.to_string(header=False))
-    elif len(df) <= 3:
-        print(df.set_index(df.columns[0]).T.to_string())
-    else:
-        print(df.to_string(max_rows=max_rows, index=False))
+    with pd.option_context("display.width", 250):
+        if len(df) == 1:
+            print(df.T.to_string(header=False, max_colwidth=90))
+        elif len(df) <= 6:
+            print(df.set_index(df.columns[0]).T.to_string(max_colwidth=90))
+        else:
+            print(df.to_string(max_rows=max_rows, index=False, max_colwidth=40))
     print()
 
 

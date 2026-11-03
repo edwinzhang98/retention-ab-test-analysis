@@ -1,10 +1,12 @@
 # 02 — Metric Definitions
 
-**Owner:** Product Analyst, Growth · **Readers:** Growth PM, Game PM, Onboarding PM, media buyer, Analytics Eng · **Version:** 1.0 · **Date:** 2026-11-03
+**Owner:** Product Analyst, Growth · **Readers:** Growth PM, Game PM, Onboarding PM, media buyer, Analytics Eng · **Version:** 2.0 · **Date:** 2026-11-03
 
-These definitions were written before the analysis, so that everyone computes each number the same way. The "Current value" rows were filled in afterwards from the pipeline output: `reports/results.json` (JSON path in brackets) and `reports/tables/*.csv`. If a deliverable disagrees with those two files, the deliverable is wrong.
+These definitions exist so that everyone computes each number the same way. Version 1.0 (M1–M16) was written before the analysis. Version 2.0 adds methods checks (M17–M21) and sharpens M5, M12, M14, M15 and M16. Those additions were defined after the first results had been seen, so they are diagnostics, not pre-registered tests (S7).
 
-Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions.md`](assumptions.md). Row counts, nulls and outliers are in [`03_data_quality_checks.md`](03_data_quality_checks.md).
+The "Current value" rows come from the pipeline output: `reports/results.json` (JSON path in brackets) and `reports/tables/*.csv`. If a deliverable disagrees with those two files, the deliverable is wrong.
+
+Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions.md`](assumptions.md). Row counts, nulls and outliers are in [`03_data_quality_checks.md`](03_data_quality_checks.md). R1–R6 are the recommendations in [`readout.md`](readout.md).
 
 ---
 
@@ -16,8 +18,10 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Units | Rates are stored as proportions (0–1) and shown as % with 2 decimals. A difference between two rates is in **percentage points (pp)**, 2 decimals. Relative changes are in %, with 1 decimal here and whole numbers in the PM readout. Counts use thousands separators. Money is written as "USD". |
 | Rounding | Differences are computed on unrounded rates, so a difference can disagree with the rounded rates in its last digit. Example: 2.55% − 1.79% is shown as +0.77 pp, because the unrounded rates are 2.5547% and 1.7854%. |
 | Intervals | 95%, two-sided (α = 0.05) unless stated otherwise. Each metric names its interval method. |
-| Power | MDE and sample-size numbers use 80% power and two-sided α = 0.05 (S1). |
-| Analysis tables | `fct_ad_exposure_users` has one row per user in the ad experiment. `fct_game_players` has one row per Cookie Cats player. `agg_ad_cells` holds counts by arm × peak day × peak hour × exposure bucket. All three are built by `src/data.py`. SQL staging equivalents: `sql/01_stg_marketing_ab.sql`, `sql/05_stg_cookie_cats.sql`. |
+| p-values | Never shown as 0. Below 0.0001 they are written "p < 0.0001" in tables and summaries, or in scientific notation (1.7 × 10⁻¹³) in technical text. The PM readout uses no p-values at all. |
+| Power | MDE and sample sizes use 80% power and two-sided α = 0.05 (S1). Power is evaluated at effect sizes fixed in advance, above all the smallest lift worth acting on (B7), and never at the observed effect (M14). |
+| SRM status | PASS / WARNING / FAIL, from the two-level rule in M12 (S2). |
+| Analysis tables | `fct_ad_exposure_users` has one row per user in the ad experiment. `fct_game_players` has one row per Cookie Cats player. `agg_ad_cells` holds counts by arm × peak day × peak hour × exposure bucket, with the daypart derived from the peak hour. All three are built by `src/data.py`. SQL staging equivalents: `sql/01_stg_marketing_ab.sql`, `sql/05_stg_cookie_cats.sql`. |
 | Source of truth | `reports/results.json` holds every headline number. `reports/tables/*.csv` holds the segment tables. |
 
 ## 2. Populations and filters
@@ -26,44 +30,52 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 - **Unit of analysis:** user (`user id`, renamed to `user_id`). The file has 588,101 rows and 588,101 unique users, with 0 duplicates and 0 nulls in any column.
 - **Arms:** `test group` ∈ {`ad`, `psa`}, with 564,577 ad users and 23,524 PSA users.
 - **Exclusions:** none. The CSV index column (`Unnamed: 0`) is dropped. The 36 users with more than 1,000 ads (max 2,065) are kept (A12).
-- **Who is in the file:** every user saw at least one ad or PSA (`total ads` min = 1). The population is therefore *served* users, not all *assigned* users (A4).
+- **Who is in the file:** every user saw at least one ad or PSA (`total ads` min = 1). Conversion rates are therefore defined **among users with at least one impression** (an ad in the ad arm, a PSA in the control arm): *served* users, not all *assigned* users (A4).
 - **Time window:** the whole experiment flight. The data has no dates (A7).
 
 ### 2.2 Cookie Cats (retention analysis and gate experiment)
 - **Unit of analysis:** player (`userid`, renamed to `user_id`). The file has 90,189 rows, all unique, with 0 nulls.
+- **Raw assignment counts:** 44,700 gate_30 and 45,489 gate_40. Assignment happens before any cleaning, so the SRM checks (M12, M19) use these counts.
 - **Exclusion:** players with `sum_gamerounds` > 10,000 (`config.yaml: gamerounds_outlier_max`). This rule removes exactly one player (`user_id` 6390605, gate_30, 49,854 rounds in 14 days) as a logging error (C4).
-- **Analysis population:** **90,188 players**: 44,699 gate_30 and 45,489 gate_40.
+- **Analysis population:** **90,188 players**: 44,699 gate_30 and 45,489 gate_40. Every retention and effect metric uses this population.
 - **Sensitivity of the exclusion:** D1 is 44.52% and D7 is 18.61% with or without the excluded player. Mean rounds move from 51.87 to 51.32.
-- **Zero-round players:** the 3,994 players with 0 rounds stay in every denominator. They installed the game but never played.
-- **Time window:** per player and relative to install date. D1 and D7 are days 1 and 7 after install; rounds cover the first 14 days. The data has no calendar dates.
+- **Zero-round players:** the 3,994 players with 0 rounds stay in every denominator. They installed the game but never played a round. 87 of them are flagged as returning on Day 1 and 29 on Day 7, so the retention flags mean "came back to the game", not "played a round" (C2). That is about 0.1% of players, and no conclusion depends on it.
+- **Time window:** per player, relative to install. D1 and D7 are classic day-N flags: the player came back on day 1 / day 7 after install (M8, M9). Rounds cover the first 14 days. The data has no install dates, so all players form a single install cohort (C6): there are no install-date cohorts to compare.
 
 ## 3. Metric catalogue
 
 | ID | Metric | Role | Current value |
 |---|---|---|---|
-| M1 | Conversion rate | Primary metric (ad) | ad 2.55% vs PSA 1.79% |
-| M2 | Absolute lift (pp) | Effect size, primary | ad +0.77 pp (0.59 to 0.94); gate D7 −0.82 pp (−1.33 to −0.31) |
+| M1 | Conversion rate (users with ≥ 1 impression) | Primary metric (ad) | ad 2.55% vs PSA 1.79% |
+| M2 | Absolute lift (pp) | Effect size, primary | ad +0.77 pp (0.59 to 0.94); gate D7 −0.82 pp (−1.33 to −0.31), naive and not certified |
 | M3 | Relative lift | Secondary | ad +43.1% (+30.0% to +57.5%) |
 | M4 | Incremental conversions | Secondary (business) | 4,343 (3,316 to 5,284) |
-| M5 | Share of ad-arm conversions that are incremental | Secondary (business) | 30.1% |
+| M5 | Share of ad-arm conversions that are incremental; last-touch overstatement | Secondary (business) | 30.1% (23.1% to 36.5%); last-touch would overstate the campaign 3.3× |
 | M6 | Impressions per incremental conversion | Secondary (business) | 3,227 |
 | M7 | Breakeven CPM | Decision threshold | USD 15.49 (11.83 to 18.85) at an assumed USD 50 per conversion |
 | M8 | D1 retention | Guardrail (gate); descriptive (retention) | 44.52% |
-| M9 | D7 retention | Primary metric (gate); headline retention | 18.61% |
+| M9 | D7 retention (classic) | Primary metric (gate); headline retention | 18.61% |
 | M10 | D7 retention conditional on D1 | Diagnostic (retention) | 32.83% if returned on Day 1 vs 7.19% if not |
-| M11 | Rounds played (first 14 days) | Segmentation; guardrail (gate) | median 16, mean 51.32 |
-| M12 | Sample ratio mismatch (SRM) | Test health | ad PASS (p = 0.9998); gate WARNING (p = 0.0085) |
-| M13 | Exposure parity and balance | Test health (ad) | mean ads per user 24.82 vs 24.76 |
-| M14 | MDE / power | Design | ad 0.26 pp at 96/4 (0.10 pp at 50/50) |
-| M15 | Adjusted p-values (Holm / BH) | Rule for reading segments | hour: 8 of 24 unadjusted, 1 after Holm |
-| M16 | Interaction test | Rule for reading segments | day p = 0.013, hour p = 0.18 |
+| M11 | Rounds played (first 14 days) | Segmentation; guardrail (gate) | median 16, mean 51.32; gate difference −0.04 rounds (−1.38 to +1.30) |
+| M12 | Sample ratio mismatch (SRM), raw assignment counts | Test health | ad PASS but uninformative (quota-exact split); gate WARNING (p = 0.0086) |
+| M13 | Exposure parity and balance | Test health (ad) | mean ads per user 24.82 vs 24.76; KS D = 0.040 |
+| M14 | MDE / power at the smallest lift worth acting on | Design | MDE 0.26 pp at 96/4 (0.10 pp at 50/50); power for a 10% lift 50.8% at 96/4 vs 99.9% at 50/50 |
+| M15 | Adjusted p-values (Holm / BH) | Rule for reading segments | segments whose lift differs from the rest after Holm: day 2 of 7, hour 0 of 24, daypart 0 of 4 |
+| M16 | Interaction test | Rule for reading segments | day p = 0.013 (0.038 across 3 dimensions); hour p = 0.18; daypart p = 0.013, 0.23 without Night |
+| M17 | Segment-vs-rest contrast | Heterogeneity (exploratory) | Tuesday-peak users +0.92 pp vs other days; Thursday-peak −0.76 pp |
+| M18 | Always-on holdout cost | Decision input (R1) | 5% holdout ≈ 29,405 users ≈ 226 conversions forgone per 588K-user flight |
+| M19 | SRM by pre-gate stratum | Test health (gate) | < 15 rounds p = 0.0002 (FAIL level); ≥ 30 rounds p = 0.81 |
+| M20 | D7 gap decomposition | Diagnostic (gate) | naive −0.82 pp = player mix −0.29 + never met a gate −0.21 + could meet the gate −0.32 pp |
+| M21 | Negative controls | Test health (gate) | never reached level 30: D7 −0.33 pp (p = 0.049); pre-gate rounds differ (p = 0.004) |
 
 **Metric roles per experiment**
 
 | Experiment | Primary | Secondary | Guardrails / test health | Guardrails missing from this data |
 |---|---|---|---|---|
-| Ad vs PSA | M1 conversion rate (effect: M2) | M3, M4, M5, M6, M7 | M12 SRM vs the intended 96/4 split; M13 exposure parity | Unsubscribe / complaint rate, cost per acquisition (CPA), opt-outs, revenue per user |
-| Gate 30 vs 40 | M9 D7 retention (effect: M2) | (none) | M8 D1 retention; M11 rounds played; M12 SRM vs 50/50 | In-app purchase revenue, session length |
+| Ad vs PSA | M1 conversion rate (effect: M2) | M3, M4, M5, M6, M7; M18 for the holdout decision | M12 SRM vs the intended 96/4 split (uninformative here, see M12); M13 exposure parity | Unsubscribe / complaint rate, cost per acquisition (CPA), opt-outs, revenue per user |
+| Gate 30 vs 40 | M9 D7 retention (effect: M2; the part that could be the gate: M20) | (none) | M8 D1 retention; M11 rounds played; M12 SRM vs 50/50; M19 SRM by stratum; M21 negative controls | In-app purchase revenue, session length |
+
+**Segment analysis (ad, exploratory):** M16 first (one interaction test per dimension), then M17 (which segments differ from the rest), with the M15 adjustment. Per-segment lifts are descriptive.
 
 ---
 
@@ -73,10 +85,10 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 
 | Field | Spec |
 |---|---|
-| Definition | Share of users in an arm who converted during the experiment. |
+| Definition | Share of users in an arm who converted during the experiment, among users with at least one impression (an ad in the ad arm, a PSA in the control arm). |
 | Formula | `conversion_rate = users with converted = TRUE / users in the arm`. Numerator: `SUM(converted)`. Denominator: `COUNT(user_id)`. |
 | Grain | User (`user_id`), computed per arm (`test_group`). |
-| Population & filters | All 588,101 users (§2.1); no exclusions. |
+| Population & filters | All 588,101 users (§2.1); no exclusions. Every user in the file has `total ads` ≥ 1, so the denominator is served users, not assigned users (A4). |
 | Time window | The whole flight. The data does not record dates, the conversion event or the attribution window (A5, A6, A7). |
 | Source columns | `test group` (renamed `test_group`: `ad` / `psa`) and `converted` (boolean; the raw values are only `True` / `False`). |
 | Edge cases | A user counts once, however many ads they saw and however many times they converted. A null `converted` would be a data-quality failure (there are none), never a "no". |
@@ -92,21 +104,21 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Grain | Arm level, computed from user-level counts. |
 | Interval & test | **Primary:** the 95% Newcombe hybrid-score interval. **Cross-checks:** the Wald (unpooled) interval and a percentile bootstrap with 10,000 resamples (S4, S5). **p-value:** a two-sided pooled two-proportion z-test, equivalent to Pearson χ² without continuity correction. |
 | Population & filters / time window | Same as the underlying rate (M1, M8, M9). |
-| Edge cases | Newcombe stays well-behaved when one arm of a segment has 0 conversions; the Wald interval comes out too narrow there, because a 0% rate has zero estimated variance. If both arms are at 0% or both at 100%, p is set to 1. Small segments give wide intervals, so read the interval, not the point estimate. |
+| Edge cases | Newcombe stays well-behaved when one arm of a segment has 0 conversions; the Wald interval comes out too narrow there, because a 0% rate has zero estimated variance. If both arms are at 0% or both at 100%, p is set to 1. Small segments give wide intervals, so read the interval, not the point estimate. In the gate experiment this is the **naive** comparison of all players; the part that could be caused by the gate is M20. |
 | Computed in | `stats.two_prop_test()` (Newcombe via statsmodels `confint_proportions_2indep(method="newcomb")`), `stats.wald_diff_ci()`, `stats.bootstrap_two_prop()` + `stats.percentile_ci()`. SQL reproduces the point estimate, the pooled z statistic and the Wald interval as a cross-check: `sql/02_conversion_by_group.sql` (ad) and `sql/07_gate_experiment.sql` (gate). The Newcombe interval, the bootstrap and the p-values are Python-only, because DuckDB has no normal CDF. |
-| Current value | **Ad** [`ad.test`, `ad.wald_ci`, `ad.bootstrap`]: **+0.77 pp**, 95% CI 0.59 to 0.94. Wald gives 0.60 to 0.94; the bootstrap gives 0.59 to 0.95, with 0 of 10,000 draws ≤ 0. z = 7.37, p < 0.001. **Gate D7** [`cookie.gate.retention_7`]: **−0.82 pp**, 95% CI −1.33 to −0.31 (bootstrap −1.32 to −0.31), p = 0.0016. **Gate D1** [`cookie.gate.retention_1`]: −0.59 pp, 95% CI −1.24 to +0.06 (bootstrap −1.24 to +0.06), p = 0.074. |
+| Current value | **Ad** [`ad.test`, `ad.wald_ci`, `ad.bootstrap`]: **+0.77 pp**, 95% CI 0.59 to 0.94. Wald gives 0.60 to 0.94; the bootstrap gives 0.59 to 0.95, with 0 of 10,000 draws ≤ 0. z = 7.37, p = 1.7 × 10⁻¹³ (p < 0.0001). **Gate D7, naive** [`cookie.gate.retention_7`]: **−0.82 pp**, 95% CI −1.33 to −0.31 (bootstrap −1.32 to −0.31), p = 0.0016. Not certified (M12, M19, M21); only about −0.32 pp per install could be the gate (M20). **Gate D1** [`cookie.gate.retention_1`]: −0.59 pp, 95% CI −1.24 to +0.06 (bootstrap −1.24 to +0.06), p = 0.074. |
 
 ### M3 · Relative lift
 
 | Field | Spec |
 |---|---|
 | Definition | The treatment rate expressed as a % change on the control rate. |
-| Formula | `rel_lift = rate_t / rate_c − 1`. |
+| Formula | `rel_lift = rate_t / rate_c − 1 = RR − 1`, where `RR` is the risk ratio. |
 | Grain | Arm level. |
 | Interval | Log risk-ratio (Katz) interval: `exp(ln(RR) ± 1.96 × SE) − 1`, where `SE = sqrt(1/x_t − 1/n_t + 1/x_c − 1/n_c)` (x = conversions, n = users). The percentile bootstrap is the cross-check. |
 | Edge cases | Undefined when the control rate is 0. It is then reported as blank, never as infinite. This happens in 6 of the 24 hourly segments (hours 0, 1, 2, 4, 5 and 6). Always report it next to the absolute lift: on a low base rate a large % can be a small pp change. |
 | Computed in | `stats.two_prop_test()`; bootstrap via `stats.bootstrap_two_prop()`. SQL point estimates: `rel_lift` in `sql/02_conversion_by_group.sql`, `rel_diff` in `sql/07_gate_experiment.sql`. |
-| Current value | **Ad** [`ad.test.rel_lift`, `ad.bootstrap.rel_ci`]: **+43.1%**, 95% CI +30.0% to +57.5% (bootstrap +30.5% to +58.4%). **Gate D7:** −4.3% (−6.9% to −1.7%). **Gate D1:** −1.3% (−2.7% to +0.1%). |
+| Current value | **Ad** [`ad.test.rel_lift`, `ad.bootstrap.rel_ci`]: **+43.1%**, 95% CI +30.0% to +57.5% (bootstrap +30.5% to +58.4%). **Gate D7 (naive):** −4.3% (−6.9% to −1.7%). **Gate D1:** −1.3% (−2.7% to +0.1%). |
 
 ### M4 · Incremental conversions
 
@@ -121,16 +133,17 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Computed in | `analysis.ad_experiment()`, in the `business` block; `sql/02_conversion_by_group.sql` (`incremental_conversions`, point estimate only). |
 | Current value | [`ad.business.incremental_conversions`] **4,343** (95% CI 3,316 to 5,284). |
 
-### M5 · Share of ad-arm conversions that are incremental
+### M5 · Share of ad-arm conversions that are incremental, and last-touch overstatement
 
 | Field | Spec |
 |---|---|
-| Definition | The fraction of the ad arm's conversions that the ads caused. |
-| Formula | `incremental / conv_ad`, which equals `abs_lift / rate_ad`. |
+| Definition | **Share:** the fraction of the ad arm's conversions that the ads caused. **Last-touch overstatement:** how many times a last-touch count, which credits every conversion by an ad-exposed user to the campaign, exceeds the incremental count. |
+| Formula | `share = incremental / conv_ad = abs_lift / rate_ad = 1 − 1/RR` (the attributable fraction among the exposed). `overstatement = conv_ad / incremental = 1 / share`. |
+| Interval | Share: `1 − 1/(1 + rel_ci_low)` to `1 − 1/(1 + rel_ci_high)`, from the M3 log-RR interval. The overstatement is reported as a point estimate; its range follows from the share's interval (about 2.7× to 4.3×). |
 | Grain | Experiment total for the ad arm. |
-| Edge cases | The complement, about 70%, would have converted anyway. This is why counting every conversion by an ad-exposed user as a campaign conversion overstates impact, by about 3.3× here (14,423 / 4,343). |
-| Computed in | `analysis.ad_experiment()` (`business.share_of_ad_conversions_incremental`); `sql/02_conversion_by_group.sql` (`incremental_share_of_ad_conversions`). |
-| Current value | [`ad.business.share_of_ad_conversions_incremental`] **30.1%** (point estimate). |
+| Edge cases | The complement of the share, about 70%, would have converted anyway. The overstatement assumes a last-touch model would credit all 14,423 ad-arm conversions to the campaign (B9). If other channels take part of that credit, the overstatement is smaller. |
+| Computed in | `analysis.ad_experiment()` (`business.share_of_ad_conversions_incremental`, `business.share_of_ad_conversions_incremental_ci`, `business.last_touch_overstatement_x`); `sql/02_conversion_by_group.sql` (`incremental_share_of_ad_conversions`, `last_touch_overstatement_x`, point estimates). |
+| Current value | [`ad.business`] Share **30.1%** (95% CI 23.1% to 36.5%). Last-touch overstatement **3.3×**: 14,423 credited conversions vs ≈ 4,343 incremental ones. |
 
 ### M6 · Impressions per incremental conversion
 
@@ -154,38 +167,38 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Inputs that are assumptions | Value per conversion is USD 50, an **illustrative** figure because the data has no revenue (B1). The actual CPM is unknown (B2). Only media cost is counted (B5). |
 | Decision rule | The campaign pays back if the actual CPM is below the breakeven CPM. To be safe, compare with the lower bound. |
 | Edge cases | The breakeven is linear in the value per conversion: halve the value (USD 25) and the breakeven halves (about USD 7.75). |
-| Computed in | `analysis.ad_experiment()` (`business.breakeven_cpm_usd`, `business.incremental_value_usd`); `sql/02_conversion_by_group.sql` (`breakeven_cpm_usd`, point estimate at USD 50); chart `figures.fig_breakeven()`. Dashboard page 4 recomputes it for any value per conversion and CPM entered. |
+| Computed in | `analysis.ad_experiment()` (`business.breakeven_cpm_usd`, `business.incremental_value_usd`); `sql/02_conversion_by_group.sql` (`breakeven_cpm_usd`, point estimate at USD 50); chart `figures.fig_breakeven()`. The dashboard's Experiment Readout page (`/experiment`) recomputes it for any value per conversion and CPM entered. |
 | Current value | [`ad.business`] **USD 15.49** (95% CI USD 11.83 to 18.85). Incremental value: USD 217,149 (USD 165,800 to 264,223). Both are at USD 50 per conversion. |
 
 ### M8 · D1 retention
 
 | Field | Spec |
 |---|---|
-| Definition | Share of new players who came back and played on day 1 after install. |
+| Definition | Share of new players who came back to the game on day 1 after install. |
 | Formula | `SUM(retention_1) / COUNT(user_id)`. |
 | Grain | Player. |
 | Population & filters | 90,188 players (§2.2), including the 3,994 zero-round players. |
 | Time window | Day 1 after install. Whether "day" means a calendar day or a 24-hour window is not documented (C2). |
 | Source columns | `retention_1` (boolean). |
 | Interval | Wilson score interval for a single rate. Differences between rates use M2. |
-| Edge cases | A point-in-time flag. It says nothing about days 2–6. |
+| Edge cases | A point-in-time flag; it says nothing about days 2–6. A return does not require a finished round: 87 zero-round players have `retention_1` = TRUE (C2). |
 | Computed in | `src/retention.py` `retention_rates()` (Wilson interval via `stats.wilson_ci()`) and `retention.funnel()`; `sql/06_retention_by_segment.sql`. The gate comparison is in `sql/07_gate_experiment.sql`. |
 | Current value | [`cookie.overall`] **44.52%** (95% CI 44.20% to 44.85%). By version [`cookie.by_version`]: gate_30 44.82%, gate_40 44.23%. |
 
-### M9 · D7 retention
+### M9 · D7 retention (classic)
 
 | Field | Spec |
 |---|---|
-| Definition | Share of new players who played on day 7 after install. |
+| Definition | Share of new players who came back to the game on day 7 after install. This is **classic** (day-N) retention: activity on day 7 itself. |
 | Formula | `SUM(retention_7) / COUNT(user_id)`. |
 | Grain | Player. |
 | Population & filters | 90,188 players (§2.2). |
 | Time window | Day 7 after install (C2). |
 | Source columns | `retention_7` (boolean). |
 | Interval | Wilson score interval. Differences use M2. |
-| Edge cases | **Not** "retained through day 7" and not "active on any of days 1–7". In the analysis population, 3,598 players have D7 = TRUE but D1 = FALSE: 7.19% of the 50,035 who skipped Day 1 (3,599 in the raw file). D7 is not cumulative, and 1 − D7 is not a churn rate. |
+| Edge cases | **Not** rolling retention (active on day 7 *or later*), **not** "retained through day 7" and **not** "active on any of days 1–7". In the analysis population, 3,598 players have D7 = TRUE but D1 = FALSE: 7.19% of the 50,035 who skipped Day 1 (3,599 in the raw file). 29 zero-round players have D7 = TRUE (C2). D7 is not cumulative, and 1 − D7 is not a churn rate. |
 | Computed in | `retention.retention_rates()`; `sql/06_retention_by_segment.sql`; gate comparison in `sql/07_gate_experiment.sql`. |
-| Current value | [`cookie.overall`] **18.61%** (95% CI 18.35% to 18.86%). By version: gate_30 19.02%, gate_40 18.20%. |
+| Current value | [`cookie.overall`, `cookie.funnel`] **18.61%** (95% CI 18.35% to 18.86%); 14.62% of installs came back on both Day 1 and Day 7. By version: gate_30 19.02%, gate_40 18.20%. |
 
 ### M10 · D7 retention conditional on D1
 
@@ -195,7 +208,7 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Formula | Returned: `SUM(retention_1 AND retention_7) / SUM(retention_1)`. Did not return: `SUM(NOT retention_1 AND retention_7) / SUM(NOT retention_1)`. |
 | Grain | Player. |
 | Related funnel | Installs → played ≥ 1 round (`sum_gamerounds > 0`) → returned on Day 1 → returned on Day 1 and Day 7. Each share is a share of installs; step conversion is a step divided by the previous step. |
-| Edge cases | Both flags are outcomes for the same players, so this is a descriptive association, not "Day 1 causes Day 7". The 4.6× figure is a ratio of rates. As a pp gap the difference is 25.64 pp. |
+| Edge cases | Both flags are outcomes for the same players, so this is an association: Day-1 return is the earliest strong signal of who stays, not proof that prompting a Day-1 visit lifts D7. The 4.6× figure is a ratio of rates. As a pp gap the difference is 25.64 pp. |
 | Computed in | `retention.retention_rates(df, "d1_status")` and the last step of `retention.funnel()`; `sql/06_retention_by_segment.sql`. |
 | Current value | [`cookie.by_d1_status`, `cookie.funnel`] Returned on Day 1: **32.83%** (13,182 / 40,153). Did not return: **7.19%** (of 50,035). Ratio **4.6×**. Funnel: 95.57% of installs played ≥ 1 round, 44.52% returned on Day 1 and 14.62% returned on both Day 1 and Day 7. |
 
@@ -209,9 +222,10 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 | Population & filters | 90,188 players (outlier excluded, §2.2). |
 | Time window | First 14 days after install. This **overlaps** the D1 and D7 windows (C3). |
 | Source columns | `sum_gamerounds`. |
-| Edge cases | Rounds are not levels. `reached_gate_30 = sum_gamerounds ≥ 30` is only a proxy for having reached the level-30 gate (C7). Because the 14-day window contains day 7, rounds and D7 partly measure the same behaviour, so rounds vs retention is correlation, not cause. The distribution is heavy-tailed: compare arms on the median and a rank test, not only the mean. |
-| Computed in | `data.clean_cookie()` (bucket, `reached_gate_30`), `retention.engagement_curve()`, `retention.retention_by_rounds()`; the gate guardrail is in `analysis.cookie_analysis()`. SQL: `sql/05_stg_cookie_cats.sql`, `sql/06_retention_by_segment.sql`. |
-| Current value | [`data_quality.cookie`, `cookie.by_rounds_bucket`, `cookie.gate.rounds`] Median 16. Mean 51.32 (51.87 before the exclusion). p99 493. Max 2,961 after the exclusion. 3,994 players (4.43%) played 0 rounds. Players with < 15 rounds: 46.93% of installs, with D7 ≤ 3.41%. **Gate guardrail:** mean 51.30 (gate_40) vs 51.34 (gate_30), median 16 vs 17, Mann-Whitney p = 0.051. |
+| Interval (gate guardrail) | Difference in means with a user-level percentile bootstrap (2,000 resamples, S4), also on rounds capped at the 99.9th percentile; Mann-Whitney test on the full distribution. |
+| Edge cases | Rounds are not levels. `reached_gate_30 = sum_gamerounds ≥ 30` is only a proxy for having reached the level-30 gate (C7). Because the 14-day window contains day 7, rounds vs retention is partly definitional: it sizes the early-churn segment and is not a Day-0 targeting rule. The distribution is heavy-tailed: compare arms on the median, a rank test and a bootstrap, not only the mean. |
+| Computed in | `data.clean_cookie()` (bucket, `reached_gate_30`), `retention.engagement_curve()`, `retention.retention_by_rounds()`; the gate guardrail is in `analysis.cookie_analysis()` with `stats.bootstrap_mean_diff()`. SQL: `sql/05_stg_cookie_cats.sql`, `sql/06_retention_by_segment.sql`. |
+| Current value | [`data_quality.cookie`, `cookie.by_rounds_bucket`, `cookie.gate.rounds`] Median **16** (half of players play 16 rounds or fewer). Mean 51.32 (51.87 before the exclusion). p99 493. Max 2,961 after the exclusion. 3,994 players (4.43%) played 0 rounds. Players with < 15 rounds: 46.93% of installs, with D7 ≤ 3.41%. Players with ≥ 30 rounds: 36.89% (33,268), so at most about 37% of installs could have met the level-30 gate. **Gate guardrail:** mean 51.30 (gate_40) vs 51.34 (gate_30), a difference of −0.04 rounds (bootstrap 95% CI −1.38 to +1.30); capped at 1,071 rounds (the 99.9th percentile) −0.07 (−1.31 to +1.25); median 16 vs 17; Mann-Whitney p = 0.051. No engagement difference. |
 
 ### M12 · Sample ratio mismatch (SRM)
 
@@ -219,82 +233,148 @@ Assumptions are referenced by ID (A1, B1, C1, S1, …) and live in [`assumptions
 |---|---|
 | Definition | A test of whether the observed split of units across arms matches the intended allocation. A mismatch means assignment or logging may be broken, and the comparison may be biased. |
 | Formula | Pearson χ² goodness of fit, 1 df: `χ² = Σ (O_arm − E_arm)² / E_arm`, where `E_arm = N × intended_share_arm`. |
-| Decision rule (S2) | p < 0.001 → **FAIL**: stop, the results are not trustworthy. 0.001 ≤ p < 0.01 → **WARNING**: the results cannot be certified until assignment has been investigated. p ≥ 0.01 → **PASS**. |
+| Decision rule (S2) | p < 0.001 → **FAIL**: stop, the results are not trustworthy (the threshold follows Kohavi et al.). 0.001 ≤ p < 0.01 → **WARNING**: the results cannot be certified until assignment has been investigated (a project convention). p ≥ 0.01 → **PASS**. |
 | Grain | Unit of randomization (user / player). |
-| Population & filters | Ideally every assigned unit, before analysis exclusions. The implementation runs on the analysis tables, which for the gate experiment excludes 1 gate_30 player. On the raw file (44,700 vs 45,489) the status is the same: WARNING. |
+| Population & filters | **Raw assignment counts**: every assigned unit, before any analysis exclusion, because assignment happens before cleaning, and dropping units after assignment can create or hide a mismatch. Ad: no exclusions, so raw = analysis. Gate: 45,489 vs 44,700, which counts the excluded outlier. |
 | Intended allocation | Ad: 96/4, **inferred, not documented** (A1). Gate: 50/50 (C5). |
-| Edge cases | With a huge N the test detects tiny imbalances, and that is intended. A PASS against an allocation inferred from the same data (the ad case) is circular and weak, so pair it with exposure parity (M13). |
-| Computed in | `stats.srm_check()`, which returns `p_value`, `threshold` (0.001), `flag` (true only for a hard FAIL) and, in the current code, `warn_threshold` (0.01) and a three-level `status`. `sql/03_srm_check.sql` covers both experiments; it compares χ² with the critical values for p = 0.001 and 0.01 (`srm_status`), because DuckDB has no χ² CDF. |
-| Current value | **Ad** [`ad.srm`]: 564,577 vs 23,524 (observed share 96.00% ad), χ² ≈ 0, p = 0.9998 → **PASS**. **Gate** [`cookie.gate.srm`]: 45,489 vs 44,699 (observed share 50.44% gate_40), χ² = 6.92, p = 0.0085 → **WARNING**. That p is below the 0.01 warning level but above the 0.001 hard-fail threshold, so `flag` = false. We treat the WARNING as blocking certification of the gate result. |
-| Lead for the investigation | From [`cookie.gate.d7_by_reached_30`] (descriptive): gate_40's extra players are all among players with < 30 rounds (28,876 vs 28,044). Players with ≥ 30 rounds are balanced (16,613 vs 16,655). |
+| Quota-exactness (ad) | `deviation = n_t − N × share_t`, in users, compared with `SD = sqrt(N × share_t × (1 − share_t))`, the spread that independent random assignment would produce. Also the probability that Binomial(N, share_t) lands exactly on the nearest integer to the target. A split on that integer is what a quota or a trimmed export produces; the SRM test then passes by construction and carries no information. |
+| Edge cases | With a huge N the test detects tiny imbalances, and that is intended. A PASS on a quota-exact split is uninformative, so the ad check rests on exposure parity (M13). The gate WARNING is localized with M19 and M21. |
+| Computed in | `stats.srm_check()` returns `p_value`, `threshold` (0.001), `warn_threshold` (0.01), a three-level `status` and `flag` (true unless PASS). `stats.quota_exactness()` adds `deviation_users`, `sd_users_under_random_assignment`, `is_nearest_integer_to_target` and `prob_exactly_nearest_integer`. Both are called from `analysis.ad_experiment()` / `analysis.cookie_analysis()`. `sql/03_srm_check.sql` reproduces both on raw assignment counts for both experiments; it gets the status by comparing χ² with the critical values for p = 0.001 and 0.01, because DuckDB has no χ² CDF. |
+| Current value | **Ad** [`ad.srm`]: 564,577 vs 23,524 (observed share 96.00% ad), χ² ≈ 0, p = 0.9998 → **PASS** by the rule, but **uninformative**: 564,577 is the nearest integer to 96% of 588,101 (564,576.96), 0.04 users off, against an SD of about 150 users under random assignment. Random assignment lands exactly there with probability 0.27%. **Gate** [`cookie.gate.srm`]: 45,489 vs 44,700 (observed share 50.44% gate_40), χ² = 6.90, p = 0.0086 → **WARNING** (`flag` = true). It blocks certification of the gate result; the decision rests on the status quo (R5). |
 
 ### M13 · Exposure parity and balance of post-assignment fields
 
 | Field | Spec |
 |---|---|
 | Definition | Whether both arms were served the same volume of ad slots (ads or PSAs) with similar timing. |
-| Formula | Mean and median `total ads` per user by arm, plus distribution tests (Kolmogorov–Smirnov, Mann-Whitney). For the categorical fields (`most ads day`, `most ads hour`, exposure bucket): a χ² test of independence, with Cramér's V = `sqrt(χ² / (N × (min(rows, cols) − 1)))` as the effect size. |
+| Formula | Mean and median `total ads` per user by arm, each arm's share of users by exposure bucket, and distribution tests (Kolmogorov–Smirnov, Mann-Whitney). For the categorical fields (`most ads day`, `most ads hour`, exposure bucket): a χ² test of independence, with Cramér's V = `sqrt(χ² / (N × (min(rows, cols) − 1)))` as the effect size. |
 | Grain | User. |
-| Edge cases | These fields are recorded **during** the experiment, so they are post-assignment (A9). Small differences are expected, and at N = 588,101 they come out "significant"; Cramér's V shows how big they are. They are diagnostics only, never covariates. |
-| Computed in | `analysis.ad_experiment()`, `stats.balance_test()`. The exposure-parity means are also in `sql/02_conversion_by_group.sql` (`avg_ads_per_user_ad`, `avg_ads_per_user_psa`); the balance tests are Python-only. |
-| Current value | [`ad.groups`, `ad.balance`, `ad.total_ads_ks`] Mean ads per user: 24.82 (ad) vs 24.76 (PSA). Median 13 vs 12. KS D = 0.040. Cramér's V: peak day 0.020, peak hour 0.018, exposure bucket 0.022. All have p < 0.001 because N is huge. |
+| Edge cases | These fields are recorded **during** the experiment, so they are post-assignment (A9). Small differences are expected, and at N = 588,101 they come out "significant"; Cramér's V and the bucket shares show how big they are. A shape difference can come from PSA delivery or from ads changing behaviour, and this data cannot separate the two. They are diagnostics and exploratory cuts only, never covariates. |
+| Computed in | `analysis.ad_experiment()`, `stats.balance_test()`; bucket shares in `ad.heterogeneity.exposure_bucket.arm_shares`. The exposure-parity means are also in `sql/02_conversion_by_group.sql` (`avg_ads_per_user_ad`, `avg_ads_per_user_psa`) and each arm's mix across segments in `sql/04_lift_by_day_and_hour.sql` (`share_of_arm_ad`, `share_of_arm_psa`); the distribution tests are Python-only. |
+| Current value | [`ad.groups`, `ad.balance`, `ad.total_ads_ks`, `ad.heterogeneity.exposure_bucket.arm_shares`] Mean ads per user: 24.82 (ad) vs 24.76 (PSA). Median 13 vs 12. The shapes differ a little: 30.1% of ad users vs 33.4% of PSA users saw 1–5 ads; 21.8% vs 17.6% saw 11–20. KS D = 0.040; Mann-Whitney p < 0.0001. Cramér's V: peak day 0.020, peak hour 0.018, exposure bucket 0.022, all with p < 0.0001 because N is huge. |
 
-### M14 · MDE / power
+### M14 · MDE / power at the smallest lift worth acting on
 
 | Field | Spec |
 |---|---|
-| Definition | **MDE:** the smallest true effect the design detects with 80% probability at two-sided α = 0.05. **Power:** the probability of detecting a given true effect. |
-| Formula | Effect size is Cohen's h = `2·asin(sqrt(p_t)) − 2·asin(sqrt(p_c))`. Solve the normal-approximation power equation (`NormalIndPower`) for h, given `n_t`, the ratio `n_c / n_t`, α and power. Convert back with `p_t = sin²(asin(sqrt(p_c)) + h/2)`. Then `MDE_abs = p_t − p_c` and `MDE_rel = MDE_abs / p_c`. For required N, solve for `n_t` at a target effect; the total is `n_t / share_t`. |
-| Inputs | The baseline is the control rate: 1.79% (conversion), 44.82% (D1), 19.02% (D7). |
-| Edge cases | MDE is a design-time quantity. "Observed power" computed from the observed effect adds no information and is not used as evidence; it is stored in `results.json` only for completeness. An unbalanced split costs sensitivity because the small arm dominates the variance. |
-| Computed in | `stats.mde()`, `stats.required_total_n()`, `stats.achieved_power()`; charts `figures.fig_mde_by_split()` and `figures.fig_power_curve()`. Interactive versions: dashboard page 4 (power panel) and page 7 (sample-size calculator). No SQL. |
-| Current value | **Ad** [`ad.power`]: at 96/4, MDE **0.26 pp** (14.3% relative). The same 588,101 users split 50/50 would detect **0.10 pp** (5.5% relative). A 50/50 split needs 90,333 users to match the 0.26 pp MDE that 96/4 reaches with 588,101. Detecting a 10% relative lift (1.79% → 1.96%) needs **181,074** users at 50/50, 282,928 at 80/20 and **1,178,866** at 96/4. **Gate** [`cookie.gate.retention_*.mde`]: D1 MDE 0.93 pp (2.1% relative), D7 MDE 0.74 pp (3.9% relative). |
+| Definition | **MDE:** the smallest true effect the design detects with 80% probability at two-sided α = 0.05. **Power at a stated effect:** the probability that the design detects a true effect of that size. The stated effects are relative lifts of 5%, 10% and 20%; **10% relative is the smallest lift worth acting on** (B7, `smallest_lift_of_interest_rel`). |
+| Formula | Effect size is Cohen's h = `2·asin(sqrt(p_t)) − 2·asin(sqrt(p_c))`. MDE: solve the normal-approximation power equation (`NormalIndPower`) for h, given `n_t`, the ratio `n_c / n_t`, α and power, and convert back with `p_t = sin²(asin(sqrt(p_c)) + h/2)`; then `MDE_abs = p_t − p_c` and `MDE_rel = MDE_abs / p_c`. Power at relative lift r: h between `p_c × (1 + r)` and `p_c`, evaluated for the actual arm sizes and for a 50/50 split of the same total. Required N: solve for `n_t` at a target effect; the total is `n_t / share_t`. |
+| Inputs | The baseline is the control rate: 1.79% (conversion), 44.82% (D1), 19.02% (D7). The gate re-test uses D7 among gate_30 players who reached level 30 (43.87%). |
+| Not reported: post-hoc power | Power computed at the *observed* effect is a one-to-one function of the p-value, so it adds no information and is not evidence for or against an effect. It was removed from `results.json` in v2. Power is reported only at effect sizes fixed in advance, which says whether the design could have found the effect that matters. |
+| Edge cases | An unbalanced split costs sensitivity because the small arm dominates the variance. |
+| Computed in | `stats.mde()`, `stats.achieved_power()` (power at a stated effect), `stats.required_total_n()`; charts `figures.fig_mde_by_split()` and `figures.fig_power_curve()`, both marking the smallest lift worth acting on (`reference_lift`). Interactive versions: the power panel on the dashboard's Experiment Readout page (`/experiment`) and the sample-size calculator on the Decision page (`/decision`). No SQL. |
+| Current value | **Ad** [`ad.power`]: at 96/4, MDE **0.26 pp** (14.3% relative). The same 588,101 users split 50/50 would detect **0.10 pp** (5.5% relative). **Power for the smallest lift worth acting on** (10% relative = 0.18 pp): **50.8% at 96/4 vs 99.9% at 50/50** with the same users. For a 5% lift (0.09 pp): 17.0% vs 72.4%. For a 20% lift (0.36 pp): 97.2% vs ≈ 100%. Users needed to detect a 10% relative lift: **181,074** at 50/50, 282,928 at 80/20 and **1,178,866** at 96/4. A 50/50 split needs 90,333 users to match the 0.26 pp MDE that 96/4 reaches with 588,101. **Gate** [`cookie.gate.retention_*.mde`]: D1 MDE 0.93 pp (2.1% relative), D7 MDE 0.74 pp (3.9% relative). **Gate re-test** [`cookie.gate.retest_sizing`]: detecting the −0.87 pp D7 difference seen among players who reached level 30 needs 101,852 such players at 50/50, about 276,092 installs. |
 
 ### M15 · Adjusted p-values (Holm / BH)
 
 | Field | Spec |
 |---|---|
-| Definition | Per-segment p-values adjusted for testing many segments of one dimension at the same time. |
-| Family | All segments of one dimension: 7 peak days, 24 peak hours or 8 exposure buckets (S6). |
-| Per-segment test | M2 (two-proportion z-test and Newcombe interval) on that segment's users. |
+| Definition | Per-segment p-values adjusted for testing all segments of one dimension at once. Two families per dimension are adjusted separately, because they answer different questions: **(a) segment vs rest** (M17: does this segment's lift differ from the others'? the heterogeneity question) and **(b) per-segment lift** (is the lift in this segment different from 0? descriptive). |
+| Family | All segments of one dimension: 7 peak days, 24 peak hours, 4 dayparts or 8 exposure buckets (S6). The interaction tests (M16) are a separate family of 3 explored dimensions. |
+| Per-segment test | (a) The M17 contrast. (b) M2 (two-proportion z-test and Newcombe interval) on that segment's users. |
 | Methods | **Holm** (step-down; controls the family-wise error rate) is the default and is used in the forest plots. **Benjamini–Hochberg** (controls the false discovery rate) is reported alongside it. **Bonferroni** (p × m, capped at 1) is for reference. "Significant" means adjusted p < 0.05. |
-| Reading rule | Run the interaction test (M16) first. Only if it is convincing, look at which segments differ. Segment results stay exploratory because the segmenting fields are post-assignment (M13, A9). |
-| Edge cases | Some segments have 0 control conversions. Without correction, the expected number of false positives is m × α: 24 × 0.05 = 1.2 for hours and 7 × 0.05 = 0.35 for days. |
-| Computed in | `stats.segment_lifts()`, `stats.adjust_pvalues()` (statsmodels `multipletests` with `holm`, `fdr_bh` or `bonferroni`). Tables: `reports/tables/ad_lift_by_*.csv`, where the columns `p_adj` and `significant_adj` are Holm-adjusted. `sql/04_lift_by_day_and_hour.sql` supplies segment counts and rates; the adjustment is Python-only. Dashboard page 5 switches the method live. |
-| Current value | [`ad.heterogeneity`] **Hour:** 8 of 24 significant unadjusted, 1 after Holm, BH and Bonferroni. The survivor is hour 14: +1.25 pp, 95% CI 0.56 to 1.76. **Day:** 5 of 7 unadjusted; 5 after Holm, 5 after BH, 3 after Bonferroni. **Exposure bucket:** 3 of 8 under every method. |
+| Reading rule | Run the interaction test (M16) first, then read the segment-vs-rest contrasts (M17). A count of segments whose lift is "significantly different from 0" is **not** evidence of heterogeneity: because the overall lift is real, it mostly reflects each segment's sample size (power). Segment results stay exploratory because the segmenting fields are post-assignment (M13, A9). |
+| Edge cases | With no true heterogeneity and no correction, the expected number of false positives among the segment-vs-rest contrasts is m × α: 24 × 0.05 = 1.2 for hours and 7 × 0.05 = 0.35 for days. The contrasts use Agresti–Caffo variances, so cells with 0 control conversions do not produce false significance (M17, S10). |
+| Computed in | `stats.segment_lifts()`, `stats.adjust_pvalues()` (statsmodels `multipletests` with `holm`, `fdr_bh` or `bonferroni`). Tables: `reports/tables/ad_lift_by_{most_ads_day,most_ads_hour,daypart,exposure_bucket}.csv`, Holm-adjusted (`p_vs_rest_adj`, `differs_adj` for (a); `p_adj`, `significant_adj` for (b)). Counts per method: `ad.heterogeneity.<dimension>.differs_from_rest` and `.lift_positive`. `sql/04_lift_by_day_and_hour.sql` supplies segment counts, rates and the unadjusted flags for both questions; the adjustment is Python-only. The dashboard's Heterogeneity page (`/heterogeneity`) switches the method live. |
+| Current value | **(a) Segments whose lift differs from the rest** [`differs_from_rest`]: day **2 of 7** (Tuesday, Thursday) under every method; hour **0 of 24** under every method, unadjusted included; daypart **0 of 4**; exposure bucket 6 of 8 after Holm (5 Bonferroni, 7 BH, 7 unadjusted). **(b) Segments with a lift ≠ 0, for context only** [`lift_positive`]: day 5 of 7 after Holm and BH (3 Bonferroni); hour 1 of 24 after Holm, BH and Bonferroni (hour 14: +1.25 pp, 95% CI 0.56 to 1.76); daypart 4 of 4; exposure bucket 3 of 8 under every method. |
 
 ### M16 · Interaction test
 
 | Field | Spec |
 |---|---|
-| Definition | A single test per dimension of whether the ad effect differs across that dimension's segments. Because it is one test, there is no multiple-comparison problem. |
-| Formula | Binomial GLM on segment × arm counts. Reduced model: `logit(rate) ~ arm + segment`. Full model: `logit(rate) ~ arm × segment`. `LR = 2 × (loglik_full − loglik_reduced)`, compared with χ² on (k − 1) df. |
+| Definition | A single test per dimension of whether the ad effect differs across that dimension's segments. Because it is one test per dimension, there is no multiple-comparison problem within a dimension. |
+| Formula | Binomial GLM on segment × arm counts. Additive model: `logit(rate) ~ arm + segment`. Interaction model: `logit(rate) ~ arm × segment`. With one cell per arm × segment the interaction model fits every cell exactly, so the likelihood-ratio statistic equals the **deviance** of the additive model, compared with χ² on (k − 1) df. |
+| Multiplicity across dimensions | Three dimensions were explored: peak day, peak hour and exposure bucket (the daypart regroups the hour, so it is not counted again). The day result is also reported Bonferroni-adjusted (p × 3). |
 | Scale | Log-odds. A constant odds ratio can still produce different pp lifts in segments with different base rates. |
-| Cross-checks | The Breslow–Day test of equal odds ratios. The Cochran–Mantel–Haenszel pooled odds ratio and the Mantel–Haenszel risk difference across strata: if the stratified pooled estimate ≈ the overall lift, the headline is not driven by the day / hour mix. |
-| Edge cases | Sparse cells cause harmless convergence warnings: hours 0–6 have at most 1 control conversion each. The dimensions are post-assignment, so the results are exploratory. |
-| Computed in | `stats.interaction_lrt()`, `stats.stratified_summary()`. No SQL. |
-| Current value | [`ad.heterogeneity.*.lrt`, `.stratified`] **Day:** LR = 16.22, df = 6, p = 0.013 (Breslow–Day p = 0.013). That is weak evidence. **Hour:** LR = 29.10, df = 23, p = 0.18 (Breslow–Day p = 0.52). No evidence. **Exposure bucket:** LR = 43.71, df = 7, p < 0.001. Strong, but exploratory because exposure is post-assignment. The Mantel–Haenszel risk difference is 0.76 pp stratified by day and 0.77 pp stratified by hour, vs 0.77 pp overall. The pooled odds ratio by day is 1.44 (1.30 to 1.59). |
+| Sensitivity (`sensitivity_stratified`) | The Mantel–Haenszel risk difference stratified on the dimension (a stratum-weighted lift) compared with the crude lift. If they match, the headline is not an artefact of the segment mix (no Simpson reversal). The strata are post-assignment, so this is a sensitivity check, not an adjusted effect (S11). `results.json` also stores the CMH pooled odds ratio and the Breslow–Day test; they are not reported, because a pooled odds ratio over post-assignment strata answers no business question and Breslow–Day repeats the interaction test. |
+| Edge cases | `cells_with_zero_conversions` counts arm × segment cells with 0 conversions; by hour there are 6, all of them PSA cells (hours 0, 1, 2, 4, 5 and 6). Sparse cells make the test fragile, so hour and daypart are also tested without the night hours 0–5 (`lrt_excluding_night`). The dimensions are post-assignment, so the results are exploratory. |
+| Computed in | `stats.interaction_lrt()`, `stats.stratified_summary()`, called from `analysis.ad_experiment()`. The interaction test is Python-only; the stratified lift is also in `sql/04_lift_by_day_and_hour.sql` (`standardized_lift`). |
+| Current value | [`ad.heterogeneity.*.lrt`, `.lrt_excluding_night`, `.lrt_p_bonferroni_3_dims`, `.sensitivity_stratified`] **Day:** LR = 16.22, df = 6, p = 0.013; 0.038 after allowing for the 3 dimensions explored. Modest evidence. **Hour:** LR = 29.10, df = 23, p = 0.18; without hours 0–5, p = 0.51 (df = 17). No evidence. **Daypart:** LR = 10.80, df = 3, p = 0.013, driven entirely by Night (0–5), where the PSA arm has 1 conversion among 735 users; without Night, LR = 2.91, df = 2, p = 0.23. No reliable time-of-day pattern. **Exposure bucket:** LR = 43.71, df = 7, p = 2.4 × 10⁻⁷. Strong, but exploratory: exposure is post-assignment and tracks how active a user is. **Stratified lift (sensitivity):** 0.76 pp by day, 0.77 pp by hour, 0.77 pp by daypart and 0.81 pp by exposure bucket, vs 0.77 pp crude. No Simpson reversal. |
+
+### M17 · Segment-vs-rest contrast
+
+| Field | Spec |
+|---|---|
+| Definition | How much a segment's lift differs from the lift among all other users of the same dimension. This is the heterogeneity question ("is Tuesday's lift different from the other days'?"), as opposed to the per-segment lift ("is there a lift on Tuesday?"). |
+| Formula | Four groups: segment × arm and rest × arm. Agresti–Caffo adjusted proportions `p̃ = (x + 1) / (n + 2)` (one success and one failure added to each group). `diff_vs_rest = (p̃_ad,seg − p̃_psa,seg) − (p̃_ad,rest − p̃_psa,rest)`. `SE = sqrt(Σ p̃ (1 − p̃) / (n + 2))` over the four groups. 95% CI = `diff_vs_rest ± 1.96 × SE`; two-sided z-test p (`p_vs_rest`), adjusted across the dimension's segments (M15). `lift_rest` is the plain lift among the other segments. |
+| Why Agresti–Caffo | With plain proportions, a cell with 0 control conversions has zero estimated variance, so a small night-hour cell can look "significant" by accident. Adding one success and one failure keeps every variance positive (S10). |
+| Grain | Segment within one dimension. |
+| Edge cases | The point estimate uses the adjusted proportions, so it can differ slightly from `abs_lift − lift_rest` (Tuesday: +0.92 pp, vs 1.60 − 0.65 = +0.95 pp from plain proportions). The segments are post-assignment (A9), so a segment that "differs" is a hypothesis for a randomized test, not a targeting rule. Peak day and peak hour describe the user's habits, not a slot that can be bought (A11). |
+| Computed in | `stats.segment_lifts()` (columns `lift_rest`, `diff_vs_rest`, `diff_vs_rest_ci_low`, `diff_vs_rest_ci_high`, `p_vs_rest`, `p_vs_rest_adj`, `differs_adj`); tables `reports/tables/ad_lift_by_*.csv`; forest plots `figures.fig_lift_forest()` (filled marker = differs from the other segments after Holm). `sql/04_lift_by_day_and_hour.sql` reproduces `lift_rest`, `diff_vs_rest` and its 95% CI, without the adjustment. |
+| Current value | [`reports/tables/ad_lift_by_*.csv`, `ad.heterogeneity.*.segments_differing_holm`] **Day:** Tuesday-peak users' lift is **+0.92 pp** above the other days' (95% CI +0.43 to +1.42; Holm-adjusted p = 0.0017); Thursday-peak users' is **−0.76 pp** below (−1.25 to −0.27; Holm-adjusted p = 0.015). The other five days do not differ. **Hour:** no hour differs (smallest unadjusted p = 0.12, hour 0). **Daypart:** none differs (Night: +0.32 pp, 95% CI −0.12 to +0.77). **Exposure bucket:** 6 of 8 differ after Holm: 1–5, 6–10, 11–20 and 21–35 ads below the rest; 51–100 and 101–200 above. |
+
+### M18 · Always-on holdout cost
+
+| Field | Spec |
+|---|---|
+| Definition | The conversions a permanent PSA holdout gives up per flight. It is the price of keeping the campaign's incremental effect measurable after the test (R1). |
+| Formula | `held_out_users = N_flight × holdout_share`; `conversions_forgone = held_out_users × abs_lift`; `value_forgone = conversions_forgone × value_per_conversion`. |
+| Inputs | `holdout_share` = 5% (B8); `N_flight` = 588,101, this test's size, as the "comparable flight"; `abs_lift` = M2; value per conversion = USD 50, illustrative (B1). |
+| Edge cases | Uses the point estimate of the lift. With the M2 interval the cost runs from about 173 to 275 conversions. It assumes the lift carries over to future flights (B4) and ignores the media cost of the PSA impressions. |
+| Computed in | `analysis.ad_experiment()` → `business.always_on_holdout_cost`; `sql/02_conversion_by_group.sql` (`holdout_users`, `holdout_conversions_forgone`, `holdout_value_forgone_usd`). |
+| Current value | [`ad.business.always_on_holdout_cost`] 5% of 588,101 = **29,405 users**, so ≈ **226 conversions forgone per flight**, ≈ USD 11,310 at an assumed USD 50 per conversion. For comparison, this test's PSA arm held out 23,524 users (4%). |
+
+### M19 · SRM by pre-gate stratum (gate experiment)
+
+| Field | Spec |
+|---|---|
+| Definition | The M12 check repeated within strata defined by how much a player played before any gate could appear, to locate where an arm-size imbalance sits. |
+| Formula | M12 χ² against 50/50 within each stratum, with the same status rule. |
+| Strata | Rounds played < 15, < 30 and ≥ 30 (< 15 is nested in < 30). Neither gate can change which stratum a player falls in (C8), so a fair 50/50 split must hold within each one. |
+| Population & filters | Raw assignment counts (the excluded outlier is in ≥ 30). |
+| Related numbers | `excess_players_with_lt_15_rounds`: gate_40 minus gate_30 players with < 15 rounds. **Worst-case bound** (`worst_case_bound`): `rate_7,gate_40 × n_gate_40 / (n_gate_40 − excess) − rate_7,gate_30`, with `excess = n_gate_40 − n_gate_30` in the analysis population, i.e. the D7 gap if every one of gate_40's extra players had D7 = FALSE and were removed. This is the most favourable case for gate_40. |
+| Edge cases | Rounds are post-assignment but pre-gate. The strata were chosen after the overall WARNING, so a FAIL-level stratum is a lead for the assignment investigation, not an additional stop rule: the experiment-level status stays the M12 WARNING. |
+| Computed in | `analysis.cookie_analysis()` → `cookie.gate.srm_by_stratum`, `cookie.gate.excess_players_with_lt_15_rounds`, `cookie.gate.worst_case_bound`. SQL: `sql/09_gate_integrity.sql` (step 1, and the worst case on its "All players" row). |
+| Current value | **< 15 rounds:** 21,544 gate_40 vs 20,782 gate_30, p = 0.0002 (**FAIL level**). That is 762 of gate_40's 790 extra players (789 in the raw counts). **< 30 rounds:** 28,876 vs 28,044, p = 0.0005 (FAIL level). **≥ 30 rounds:** 16,613 vs 16,656, p = 0.81 (**PASS**). **Worst-case bound:** even if none of the 790 extra gate_40 players came back on Day 7, the D7 gap would still be −0.50 pp. |
+
+### M20 · D7 gap decomposition (gate experiment)
+
+| Field | Spec |
+|---|---|
+| Definition | Splits the naive D7 difference (M2) into a part from the player mix and parts from the differences within two strata: players who never reached level 30 and players who could have met the gate. |
+| Strata | `never_reached_30` (rounds < 30) and `reached_30` (rounds ≥ 30), analysis population. |
+| Formula | For stratum s and arm a: `w_a,s` = share of arm a's players in s; `r_a,s` = D7 rate of arm a in s. `naive = Σ_s (w_t,s r_t,s − w_c,s r_c,s) = Σ_s within_s + Σ_s composition_s`, with **symmetric weights**: `within_s = (w_t,s + w_c,s)/2 × (r_t,s − r_c,s)` and `composition_s = (w_t,s − w_c,s) × (r_t,s + r_c,s)/2`. The split is exact (no residual), and neither arm is treated as the reference (S12). |
+| Reading | The composition part and the never-reached part cannot be gate effects (C8). Only `within_reached_30` could be; it equals the reachers' D7 difference × the average share reaching 30, i.e. the install-level effect if the gate acts only on players who reach it (C9). Its CI is the reachers' M2 interval × that share (the share is treated as fixed). |
+| Edge cases | Descriptive accounting, not a causal model: the within-reached part is the only part that *could* be the gate, not proof that it *is*. "Reached 30" is a rounds proxy (C7), which blurs the reachers' estimate. With either arm's shares as weights instead, the could-be-the-gate part is still −0.32 pp. |
+| Computed in | `analysis.cookie_analysis()` → `cookie.gate.d7_decomposition`; chart `figures.fig_gap_decomposition()`. SQL: `sql/09_gate_integrity.sql` (step 3; its interval scales the Wald CI instead of Newcombe, which agrees closely at these sample sizes). |
+| Current value | [`cookie.gate.d7_decomposition`] Naive **−0.82 pp** = player mix **−0.29** + never met a gate **−0.21** + could meet the gate **−0.32 pp per install** (95% CI −0.71 to +0.07). The mix part is −0.32 pp from the reached stratum and +0.03 pp from the never-reached one. Stratum shares: 63.48% of gate_40 vs 62.74% of gate_30 never reached 30; on average 36.89% reached it. D7 within strata: never reached 3.93% vs 4.26%; reached 43.00% vs 43.87%, a difference of **−0.87 pp** among reachers (95% CI −1.94 to +0.20). |
+
+### M21 · Negative controls (gate experiment)
+
+| Field | Spec |
+|---|---|
+| Definition | Comparisons where the gate cannot have had any effect, so a fair split should show no difference. **(a) Never-reached retention:** D1 and D7 among players with < 30 rounds, who never reached level 30 and so met no gate in either version. **(b) Pre-gate engagement:** rounds capped at 29, `min(sum_gamerounds, 29)`, which only counts play before any gate could appear. |
+| Formula | (a) M2 within the stratum. (b) Mean of the capped rounds by arm, with a two-sided Mann-Whitney test. |
+| Logic | The two versions are identical until level 30, and a player cannot reach level 30 in fewer than 30 rounds (C7, C8). A difference here means the arms differed for reasons other than the gate. |
+| Edge cases | The D7 control is borderline on its own (p = 0.049) and the D1 control is not out of line (p = 0.36). The case for an assignment problem rests on M12, M19 and M21 together, not on any single test. If players could see the gate's position before reaching it, the controls would be weaker (C8). |
+| Computed in | `analysis.cookie_analysis()` → `cookie.gate.negative_control`, `cookie.gate.pre_gate_engagement`; charts `figures.fig_effect_by_stratum()` and `figures.fig_engagement_gap()`. SQL: `sql/09_gate_integrity.sql` (step 2) reproduces (a); (b) is Python-only. |
+| Current value | **(a)** [`cookie.gate.negative_control.never_reached_30`] 28,876 gate_40 vs 28,044 gate_30 players. D7 3.93% vs 4.26%: **−0.33 pp** (95% CI −0.65 to −0.001, just below 0; p = 0.049). D1 23.54% vs 23.87%: −0.32 pp (−1.02 to +0.37; p = 0.36). For comparison, players who reached level 30: D7 −0.87 pp (−1.94 to +0.20), D1 +0.08 pp (−0.78 to +0.94). **(b)** [`cookie.gate.pre_gate_engagement`] mean capped rounds 16.43 (gate_40) vs 16.66 (gate_30); Mann-Whitney **p = 0.004**. Both controls say the arms differed before any gate, consistent with the M12 WARNING. |
 
 ---
 
 ## 5. Common mistakes we avoid
 
 1. **Writing % when we mean pp.** Going from 1.79% to 2.55% is **+0.77 pp**, which is a **+43.1%** relative lift. "Conversion up 0.77%" and "up 43 points" are both wrong. We always report both measures, absolute first.
-2. **Using `total ads` (or peak day / hour) as a covariate or as a targeting rule.** These fields are measured during the experiment and differ slightly by arm (Cramér's V 0.018–0.022). Adjusting for a post-assignment variable can bias the effect. They are used only for exploratory cuts. The headline is the plain randomized comparison.
-3. **Reading 24 hourly p-values one by one.** At α = 0.05, 24 hours of pure noise would produce about 1.2 false positives. Unadjusted, 8 hours look "significant". After Holm only 1 is left, and the interaction test (p = 0.18) finds no evidence that the effect varies by hour. The same logic applies to the 7 days.
-4. **Taking the biggest segment for the best segment.** The largest hourly lift (hour 6, +2.32 pp) rests on 83 control users with 0 conversions. Small cells produce extreme estimates, so read the interval.
-5. **Treating D7 as "retained through day 7".** `retention_7` means the player played on day 7. 3,598 players have D7 = TRUE with D1 = FALSE. D7 is not cumulative, and 1 − D7 is not a churn rate.
-6. **Treating rounds → retention as causal.** Rounds are counted over 14 days, which include day 7, and players who come back naturally play more. The pattern tells us *who* to target, not that more rounds *cause* retention (R6 must be an experiment).
-7. **Calling every ad-arm conversion a campaign conversion.** Only 30.1% are incremental. The rest would have happened with a PSA in the slot.
-8. **Reading "not significant" as "no effect".** Gate D1 is −0.59 pp, with a 95% CI of −1.24 to +0.06 and an MDE of 0.93 pp. That is inconclusive, not zero.
-9. **Taking an SRM pass as proof of clean randomization, or ignoring a warning because the decision feels safe.** The ad SRM is tested against an allocation inferred from the data, so exposure parity is the stronger check. The gate SRM is a WARNING, so the gate result is reported as not certified, even though the decision (keep the gate at 30) is the safe default.
+2. **Using `total ads` (or peak day / hour) as a covariate or as a targeting rule.** These fields are measured during the experiment and differ slightly by arm (33.4% of PSA vs 30.1% of ad users saw 1–5 ads; Cramér's V 0.018–0.022). Adjusting for a post-assignment variable can bias the effect. They are used only for exploratory cuts, and stratified results are sensitivity checks (S11). The headline is the plain randomized comparison.
+3. **Counting "significant" segments as evidence that the effect varies.** Because the overall lift is real, a test of "lift ≠ 0" inside each segment mostly measures segment size: big segments come out significant and small ones don't, whether or not the effect varies. Heterogeneity is answered by the interaction test (M16) and the segment-vs-rest contrasts (M17). For hours: p = 0.18, and no hour differs from the rest, even before correction. The m × α arithmetic (1.2 false positives expected among 24 hours) applies to those contrasts.
+4. **Taking the biggest segment for the best segment.** The largest hourly lift (hour 6, +2.32 pp) rests on 83 control users with 0 conversions. The daypart pattern rests on a Night cell with 1 control conversion among 735 users. Small cells produce extreme estimates, so read the interval.
+5. **Treating D7 as "retained through day 7" or as rolling retention.** `retention_7` means the player came back on day 7 itself. 3,598 players have D7 = TRUE with D1 = FALSE. D7 is not cumulative, and 1 − D7 is not a churn rate.
+6. **Treating rounds → retention as causal, or as a Day-0 targeting rule.** Rounds are counted over 14 days, which include day 7, so the link is partly definitional. It sizes the early-churn segment; it does not say who to target on day 0, or that more rounds *cause* retention (R6 must be an experiment).
+7. **Calling every ad-arm conversion a campaign conversion.** Only 30.1% are incremental (95% CI 23.1% to 36.5%). Last-touch counting would overstate the campaign 3.3×.
+8. **Reading "not significant" as "no effect".** Gate D1 is −0.59 pp, with a 95% CI of −1.24 to +0.06 and an MDE of 0.93 pp. A D1 drop of up to 1.2 pp cannot be ruled out.
+9. **Reading a quota-exact split's SRM pass as reassurance.** The ad split lands on the nearest whole number to 96%, 0.04 users off where random assignment would typically miss by about 150. Random assignment lands there with probability 0.27%, so the split was set by a quota or the file was trimmed, and the SRM test passes by construction. Exposure parity (M13) and the allocation config carry the check.
 10. **Quoting dollars as results.** The USD figures depend on an illustrative USD 50 per conversion and an unknown CPM. The headline business number is incremental conversions.
-11. **Using observed (post-hoc) power as evidence.** Power and MDE are design quantities. We use them to say what a test *could* detect and to size the next test.
+11. **Reporting post-hoc ("observed") power.** Power at the observed effect is a restatement of the p-value, so we do not compute it. Power and MDE are design quantities: what a test *could* detect, judged at the smallest lift worth acting on (M14), and how to size the next test.
 12. **Changing denominators silently.** Retention denominators are all installs, including the 3,994 zero-round players, not only "players who played". Conversion denominators are all served users in the arm.
 13. **Extrapolating the measured lift to another budget.** The test compared current spend with no ads. It says nothing direct about 2× spend (B6, R2).
+14. **Running the SRM check on post-cleaning counts.** Assignment happens before cleaning, and dropping units after assignment can create or hide an imbalance. The gate check uses the raw counts, 45,489 vs 44,700 (p = 0.0086). The v1 tables used the post-cleaning 44,699 (p = 0.0085); the status is the same here, but it need not be in general.
+15. **Reading the naive gate gap as the gate's effect.** Of the −0.82 pp, −0.29 pp comes from the player mix and −0.21 pp from players who never met a gate. Only −0.32 pp per install could be the gate, and its 95% CI includes 0 (M20).
+16. **Reading the exposure pattern as a frequency curve.** Exposure tracks how active a user is: PSA conversion rises from 0.28% at 1–5 ads to 15.50% at 200+. There is no detectable lift for the 66% of users with ≤ 20 ads, 1.73 to 7.04 pp at 36–200 ads, and no usable estimate past 200 ads (CI −4.93 to +4.10 pp, 258 control users). That says "the lift lives in heavy users", not that the lift stops growing past some number of ads. A frequency cap needs its own test (R2).
+17. **Printing p = 0.** The main ad test has p = 1.7 × 10⁻¹³, shown as p < 0.0001, never as 0.
 
 ## 6. Change log
 
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-11-03 | First version. Definitions fixed before the analysis; current values filled in from `reports/results.json`. |
+| 2.0 | 2026-11-03 | Migrated to analysis core v2 (added methods checks). SRM on raw assignment counts (gate: 44,700 vs 45,489, p = 0.0086, WARNING) and a quota-exactness check for the ad split (M12). Segment-vs-rest contrasts (M17) separated from per-segment lift (M15); daypart added to M15–M17; the interaction test documented as deviance-based, with stratified results as a sensitivity check (M16). Power at the smallest lift worth acting on; post-hoc power removed (M14). Interval for the incremental share and the last-touch overstatement (M5). New M18–M21: holdout cost, SRM by pre-gate stratum, D7 gap decomposition, negative controls. Classic D7 and "came back to the game" wording (M8, M9). Every current value refreshed from `results.json`. |

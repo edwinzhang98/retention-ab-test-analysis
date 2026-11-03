@@ -25,8 +25,12 @@
 --           - players_over_10000_rounds is excluded in staging (threshold =
 --             gamerounds_outlier_max in config.yaml); the *_all_rows vs
 --             *_after_exclusion rows show the exclusion does not move retention.
---           - d7_without_d1 is expected, not an error: retention_7 means "played
---             on day 7", which does not require playing on day 1.
+--           - d7_without_d1 is expected, not an error: retention_7 means "came back
+--             on day 7", which does not require coming back on day 1.
+--           - zero_round_players_flagged_d1 / _d7: players with 0 rounds who are
+--             still flagged as retained. The flags therefore mean "came back to the
+--             game", not "played a round". It is about 0.1% of players and no
+--             conclusion depends on it.
 -- =============================================================================
 
 WITH marketing AS (
@@ -74,6 +78,8 @@ cookie_profile AS (
         QUANTILE_CONT(sum_gamerounds, 0.999)                           AS rounds_p999,
         MAX(sum_gamerounds)                                            AS rounds_max,
         COUNT(*) FILTER (WHERE sum_gamerounds = 0)                     AS zero_round_players,
+        COUNT(*) FILTER (WHERE sum_gamerounds = 0 AND retention_1)     AS zero_round_flagged_d1,
+        COUNT(*) FILTER (WHERE sum_gamerounds = 0 AND retention_7)     AS zero_round_flagged_d7,
         COUNT(*) FILTER (WHERE sum_gamerounds > 10000)                 AS players_over_10000_rounds,
         COUNT(*) FILTER (WHERE sum_gamerounds <= 10000)                AS rows_after_exclusion,
         MAX(sum_gamerounds) FILTER (WHERE sum_gamerounds <= 10000)     AS rounds_max_after_exclusion,
@@ -110,16 +116,18 @@ checks (check_id, dataset, check_name, observed_value, rule) AS (
     SELECT 20, 'cookie_cats',  'sum_gamerounds_p999',                rounds_p999,                'info'         FROM cookie_profile    UNION ALL
     SELECT 21, 'cookie_cats',  'sum_gamerounds_max',                 rounds_max,                 'info'         FROM cookie_profile    UNION ALL
     SELECT 22, 'cookie_cats',  'zero_round_players',                 zero_round_players,         'info'         FROM cookie_profile    UNION ALL
-    SELECT 23, 'cookie_cats',  'players_over_10000_rounds',          players_over_10000_rounds,  'warn if > 0'  FROM cookie_profile    UNION ALL
-    SELECT 24, 'cookie_cats',  'rows_after_outlier_exclusion',       rows_after_exclusion,       'info'         FROM cookie_profile    UNION ALL
-    SELECT 25, 'cookie_cats',  'sum_gamerounds_max_after_exclusion', rounds_max_after_exclusion, 'info'         FROM cookie_profile    UNION ALL
-    SELECT 26, 'cookie_cats',  'd1_retention_all_rows',              d1_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
-    SELECT 27, 'cookie_cats',  'd1_retention_after_exclusion',       d1_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
-    SELECT 28, 'cookie_cats',  'd7_retention_all_rows',              d7_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
-    SELECT 29, 'cookie_cats',  'd7_retention_after_exclusion',       d7_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
-    SELECT 30, 'cookie_cats',  'mean_rounds_all_rows',               mean_rounds_all_rows,       'info'         FROM cookie_profile    UNION ALL
-    SELECT 31, 'cookie_cats',  'mean_rounds_after_exclusion',        mean_rounds_after_exclusion,'info'         FROM cookie_profile    UNION ALL
-    SELECT 32, 'cookie_cats',  'd7_without_d1',                      d7_without_d1,              'info'         FROM cookie_profile
+    SELECT 23, 'cookie_cats',  'zero_round_players_flagged_d1',      zero_round_flagged_d1,      'info'         FROM cookie_profile    UNION ALL
+    SELECT 24, 'cookie_cats',  'zero_round_players_flagged_d7',      zero_round_flagged_d7,      'info'         FROM cookie_profile    UNION ALL
+    SELECT 25, 'cookie_cats',  'players_over_10000_rounds',          players_over_10000_rounds,  'warn if > 0'  FROM cookie_profile    UNION ALL
+    SELECT 26, 'cookie_cats',  'rows_after_outlier_exclusion',       rows_after_exclusion,       'info'         FROM cookie_profile    UNION ALL
+    SELECT 27, 'cookie_cats',  'sum_gamerounds_max_after_exclusion', rounds_max_after_exclusion, 'info'         FROM cookie_profile    UNION ALL
+    SELECT 28, 'cookie_cats',  'd1_retention_all_rows',              d1_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
+    SELECT 29, 'cookie_cats',  'd1_retention_after_exclusion',       d1_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
+    SELECT 30, 'cookie_cats',  'd7_retention_all_rows',              d7_rate_all_rows,           'info'         FROM cookie_profile    UNION ALL
+    SELECT 31, 'cookie_cats',  'd7_retention_after_exclusion',       d7_rate_after_exclusion,    'info'         FROM cookie_profile    UNION ALL
+    SELECT 32, 'cookie_cats',  'mean_rounds_all_rows',               mean_rounds_all_rows,       'info'         FROM cookie_profile    UNION ALL
+    SELECT 33, 'cookie_cats',  'mean_rounds_after_exclusion',        mean_rounds_after_exclusion,'info'         FROM cookie_profile    UNION ALL
+    SELECT 34, 'cookie_cats',  'd7_without_d1',                      d7_without_d1,              'info'         FROM cookie_profile
 )
 
 SELECT

@@ -19,14 +19,20 @@
 --             python -m src.sql_check sql/06_retention_by_segment.sql   (print this result)
 --             python -m src.sql_check                                   (run every file + reconcile)
 --             duckdb -c ".read sql/06_retention_by_segment.sql"         (DuckDB CLI)
--- Notes   : - DN retention = share of ALL installs in the segment who came back and
---             played on day N after install (denominator = installs, not survivors).
+-- Notes   : - DN retention = share of ALL installs in the segment who came back on
+--             day N after install (classic day-N, not rolling; denominator =
+--             installs, not survivors). There are no install dates, so the file is
+--             a single install cohort, not a series of install-date cohorts.
 --           - D7 is not conditional on D1: some players skip day 1 and return on
 --             day 7. Within d1_status, d7_retention_rate compares D7 for Day-1
---             returners vs non-returners. The install -> Day 1 -> Day 1 and Day 7
---             funnel can be read off the 'overall' and 'd1_status' rows.
---           - rounds_bucket uses rounds over 14 days, which overlap the D7 window:
---             rounds vs retention is a correlation, not a cause.
+--             returners vs non-returners: Day-1 return is the earliest strong signal
+--             of D7 (an association, not a cause). The install -> Day 1 -> Day 1
+--             and Day 7 funnel can be read off the 'overall' and 'd1_status' rows.
+--           - rounds_bucket uses rounds over the first 14 days, which include day 7,
+--             so rounds vs retention is partly definitional: it sizes the
+--             early-churn segment, it is not a Day-0 targeting rule.
+--           - The 'version' rows are descriptive. The gate comparison and its
+--             caveats are in 07_gate_experiment.sql and 09_gate_integrity.sql.
 --           - Wilson CIs for these rates are computed in src/retention.py.
 -- =============================================================================
 

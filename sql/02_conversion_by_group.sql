@@ -4,8 +4,9 @@
 -- Purpose : Primary readout of the ad experiment. Users, conversions and
 --           conversion rate per arm; absolute and relative lift (ad vs PSA);
 --           pooled two-proportion z statistic; 95% Wald CI for the difference;
---           the exposure-parity guardrail; and the business translation
---           (incremental conversions, breakeven CPM at an assumed value).
+--           the exposure-parity check; and the business translation
+--           (incremental conversions, what last-touch attribution would claim,
+--           breakeven CPM at an assumed value, cost of an always-on holdout).
 -- Input   : data/raw/marketing_AB.csv - one row per user (rules as in
 --           01_stg_marketing_ab.sql).
 -- Output  : 1 row - grain: the experiment (ad = treatment, psa = control).
@@ -21,8 +22,17 @@
 --             impressions_ad                        total ads shown to the ad arm
 --             incremental_conversions               abs_lift * users_ad
 --             incremental_share_of_ad_conversions   incremental_conversions / conversions_ad
+--                                                   (= 1 - 1 / relative risk): the share of the
+--                                                   ad arm's conversions the ads actually caused
+--             last_touch_overstatement_x            conversions_ad / incremental_conversions: how many
+--                                                   times last-touch attribution (every ad-arm
+--                                                   conversion credited to the ad) overstates the campaign
 --             breakeven_cpm_usd                     cost per 1,000 impressions at which the
 --                                                   incremental value just covers media cost
+--             holdout_users                         users a proposed always-on PSA holdout would
+--                                                   take from a flight of this size (holdout_share)
+--             holdout_conversions_forgone           holdout_users * abs_lift: the holdout's cost
+--             holdout_value_forgone_usd             the same at the assumed value per conversion
 -- Run     : from the repo root, one of
 --             python -m src.sql_check sql/02_conversion_by_group.sql   (print this result)
 --             python -m src.sql_check                                  (run every file + reconcile)
@@ -32,16 +42,24 @@
 --           - The headline interval in the report is the Newcombe CI. It, the
 --             bootstrap CI and the p-value come from src/stats.py (DuckDB has no
 --             normal CDF); at this sample size the Wald CI computed here is close to it.
+--             Reports print a p-value this small as "p < 0.0001", never as 0.
+--           - Read 03_srm_check.sql with this file: the 96/4 split passes the SRM
+--             test by construction, so exposure parity (avg_ads_per_user_*, and the
+--             bucket shares in 04_lift_by_day_and_hour.sql) is the meaningful check.
 --           - value_per_conversion_usd = 50 is an ILLUSTRATIVE assumption
 --             (config.yaml); the data has no revenue or cost fields. Treat
 --             breakeven_cpm_usd as "what CPM could we afford IF a conversion is
 --             worth USD 50", to be checked against the CPM Finance actually pays.
+--           - holdout_share = 0.05 is the proposed always-on holdout (config.yaml).
+--             Its cost assumes the measured average lift also holds for the users
+--             held out.
 -- =============================================================================
 
 WITH params AS (
     SELECT
         1.959963984540054::DOUBLE AS z_crit_95,                 -- standard normal 97.5th percentile (two-sided alpha = 0.05)
-        50::DOUBLE                AS value_per_conversion_usd   -- ILLUSTRATIVE assumption, see Notes
+        50::DOUBLE                AS value_per_conversion_usd,  -- ILLUSTRATIVE assumption, see Notes
+        0.05::DOUBLE              AS holdout_share              -- proposed always-on PSA holdout, see Notes
 ),
 
 -- Same rules as 01_stg_marketing_ab.sql (repeated so this file runs on its own)
@@ -120,7 +138,13 @@ SELECT
     s.impressions_ad,
     s.abs_lift * s.users_ad                      AS incremental_conversions,
     s.abs_lift * s.users_ad / s.conversions_ad   AS incremental_share_of_ad_conversions,
+    s.conversions_ad / (s.abs_lift * s.users_ad) AS last_touch_overstatement_x,
     s.abs_lift * s.users_ad * p.value_per_conversion_usd
-        / s.impressions_ad * 1000                AS breakeven_cpm_usd
+        / s.impressions_ad * 1000                AS breakeven_cpm_usd,
+    (s.users_ad + s.users_psa) * p.holdout_share AS holdout_users,
+    (s.users_ad + s.users_psa) * p.holdout_share
+        * s.abs_lift                             AS holdout_conversions_forgone,
+    (s.users_ad + s.users_psa) * p.holdout_share
+        * s.abs_lift * p.value_per_conversion_usd AS holdout_value_forgone_usd
 FROM standard_errors AS s
 CROSS JOIN params AS p;
