@@ -31,10 +31,15 @@ SEED: int = int(A["seed"])
 ALPHA: float = float(A["alpha"])
 POWER: float = float(A["power"])
 N_BOOT: int = int(A["n_bootstrap"])
+N_BOOT_MEANS: int = int(A["n_bootstrap_means"])
 INTENDED_AD_SHARE: float = float(A["intended_ad_share"])
 INTENDED_GATE40_SHARE: float = float(A["intended_gate40_share"])
 GAMEROUNDS_OUTLIER_MAX: int = int(A["gamerounds_outlier_max"])
 VALUE_PER_CONVERSION: float = float(A["value_per_conversion_usd"])
+SESOI_REL: float = float(A["smallest_lift_of_interest_rel"])
+HOLDOUT_SHARE: float = float(A["holdout_share"])
+SRM_FAIL_P: float = float(A["srm_fail_p"])
+SRM_WARN_P: float = float(A["srm_warn_p"])
 
 # Local working folders (git-ignored except reports/)
 DATA_DIR = ROOT / "data"
@@ -46,6 +51,9 @@ TABLES_DIR = REPORTS_DIR / "tables"
 RESULTS_JSON = REPORTS_DIR / "results.json"
 
 DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+# Hour of peak exposure grouped into the dayparts a media buyer can actually buy
+DAYPART_ORDER = ["Night (0-5)", "Morning (6-11)", "Afternoon (12-17)", "Evening (18-23)"]
+DAYPART_OF_HOUR = {h: DAYPART_ORDER[h // 6] for h in range(24)}
 # Exposure (total ads seen) buckets. Upper-inclusive.
 EXPOSURE_BINS = [0, 5, 10, 20, 35, 50, 100, 200, 10**9]
 EXPOSURE_LABELS = ["1-5", "6-10", "11-20", "21-35", "36-50", "51-100", "101-200", "200+"]

@@ -9,8 +9,13 @@ analysis:
   seed: 20211103            # fixed seed for every bootstrap
   alpha: 0.05
   power: 0.80
-  n_bootstrap: 10000
+  n_bootstrap: 10000        # count-level bootstrap draws (binary metrics)
+  n_bootstrap_means: 2000   # user-level bootstrap draws (rounds played)
   intended_ad_share: 0.96   # intended allocation of the ad experiment (see docs/assumptions.md)
   intended_gate40_share: 0.50
   gamerounds_outlier_max: 10000   # players above this are dropped (1 player, 49,854 rounds)
   value_per_conversion_usd: 50    # ILLUSTRATIVE default; no revenue in the data
+  smallest_lift_of_interest_rel: 0.10   # smallest relative lift worth acting on (power is judged here)
+  holdout_share: 0.05             # proposed always-on PSA holdout (cost estimate in results)
+  srm_fail_p: 0.001               # SRM hard stop (Kohavi et al. convention)
+  srm_warn_p: 0.01                # SRM warning band (project convention)

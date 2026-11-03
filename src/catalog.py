@@ -45,6 +45,19 @@ def pct(x: float, nd: int = 1) -> str:
     return f"{x*100:.{nd}f}%"
 
 
+def fmt_p(p: float) -> str:
+    """Human-readable p-value: never prints 0."""
+    if p < 0.0001:
+        return "p < 0.0001"
+    if p < 0.001:
+        return f"p = {p:.4f}"
+    return f"p = {p:.3f}"
+
+
+def usd(x: float, nd: int = 2) -> str:
+    return f"USD {x:,.{nd}f}"
+
+
 def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     out: dict[str, Fig] = {}
     ad, ck = res["ad"], res["cookie"]
@@ -56,16 +69,18 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     funnel = pd.DataFrame(ck["funnel"])
     d1, d7 = ck["overall"]["retention_1"], ck["overall"]["retention_7"]
     f_ = funnel.set_index("step")["share_of_installs"]
-    tk = (f"{pct(1 - d1)} of new players don't come back on Day 1 and only {pct(d7)} are back on Day 7; "
-          f"the largest absolute loss ({(f_.iloc[1] - f_.iloc[2])*100:.0f} pp of installs) is between the first session and Day 1.")
+    tk = (f"{pct(1 - d1)} of new players don't come back on Day 1; {pct(d7)} play on Day 7 "
+          f"({pct(f_.iloc[3])} on both Day 1 and Day 7). The largest absolute loss "
+          f"({(f_.iloc[1] - f_.iloc[2])*100:.0f} pp of installs) is between the first session and Day 1.")
     out["ret_funnel"] = Fig("ret_funnel", "retention", F.fig_funnel(
         funnel, "New-player retention funnel (% of installs)", tk), tk)
 
     by_rounds = R.retention_rates(players, "rounds_bucket")
     low = by_rounds[by_rounds["rounds_bucket"].astype(str).isin(["0", "1-4", "5-14"])]
     share_low = low["players"].sum() / len(players)
-    tk = (f"Players with < 15 rounds are {pct(share_low, 0)} of installs and almost none are back on Day 7 "
-          f"(≤ {pct(low['retention_7'].max())}); retention climbs steeply with engagement depth.")
+    tk = (f"Players with < 15 rounds in 14 days are {pct(share_low, 0)} of installs and ≤ {pct(low['retention_7'].max())} "
+          f"of them are back on Day 7. Rounds are counted through day 14, so this sizes the early-churn segment; "
+          f"it is not a Day-0 targeting rule.")
     out["ret_by_rounds_bucket"] = Fig("ret_by_rounds_bucket", "retention", F.fig_retention_by_segment(
         by_rounds, "rounds_bucket", "D1 and D7 retention by rounds played in first 14 days (%)", tk,
         seg_title="Rounds played (bucket)"), tk)
@@ -73,79 +88,87 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     by_d1 = R.retention_rates(players, "d1_status")
     r_yes = by_d1.loc[by_d1.d1_status == "Returned Day 1", "retention_7"].iloc[0]
     r_no = by_d1.loc[by_d1.d1_status == "Did not return Day 1", "retention_7"].iloc[0]
-    tk = (f"Players who return on Day 1 are {r_yes / r_no:.1f}× as likely to be back on Day 7 "
-          f"({pct(r_yes)} vs {pct(r_no)}): Day 1 is the first moment to win.")
+    tk = (f"Players who return on Day 1 are {r_yes / r_no:.1f}× as likely to play on Day 7 ({pct(r_yes)} vs {pct(r_no)}). "
+          f"Day-1 return is the earliest strong signal of who stays; it does not prove that prompting a Day-1 visit would lift D7.")
     out["ret_by_d1"] = Fig("ret_by_d1", "retention", F.fig_retention_by_segment(
         by_d1, "d1_status", "D7 retention by whether the player returned on Day 1 (%)", tk,
         metrics=("retention_7",), seg_title="Day-1 status"), tk)
 
     curve = R.engagement_curve(players, 200, by="version")
     share30 = (players["sum_gamerounds"] >= 30).mean()
-    tk = (f"Half of players stop before {int(players['sum_gamerounds'].median())} rounds and only "
-          f"{pct(share30, 0)} reach round 30, so the gate only touches a minority of installs.")
+    tk = (f"Half of players stop before {int(players['sum_gamerounds'].median())} rounds; only {pct(share30, 0)} played "
+          f"≥ 30 rounds, so at most ~{pct(share30, 0)} of installs could have met the level-30 gate.")
     out["ret_engagement_curve"] = Fig("ret_engagement_curve", "retention", F.fig_engagement_curve(
         curve, "Share of players reaching at least N rounds (%)", tk), tk)
 
     by_r = R.retention_by_rounds(players, 150, 5)
-    tk = "D7 retention rises almost linearly with play depth up to ~100 rounds; this is correlation, not cause."
+    tk = ("D7 retention rises steadily with rounds played up to ~100 rounds. Rounds are counted over 14 days, so players "
+          "who come back on day 7 mechanically log more rounds: descriptive, not causal.")
     out["ret_by_rounds_curve"] = Fig("ret_by_rounds_curve", "retention", F.fig_retention_by_rounds(
         by_r, "Retention by rounds played (%, 5-round bins)", tk), tk)
 
     gaps = pd.DataFrame(ck["gap_by_dimension"])
-    top = gaps.iloc[0]
-    tk = (f"{top['dimension']} separates players most ({top['gap_pp']:.0f} pp D7 gap); "
-          f"the experiment version barely matters ({gaps.iloc[-1]['gap_pp']:.1f} pp).")
+    top, ver = gaps.iloc[0], gaps[gaps["column"] == "version"].iloc[0]
+    tk = (f"Engagement depth separates D7 most ({top['gap_pp']:.0f} pp across {int(top['n_segments'])} buckets, partly by "
+          f"construction); the gate version moves D7 by {ver['gap_pp']:.1f} pp: small next to engagement, large enough to "
+          f"decide the gate question.")
     out["ret_gap_by_dimension"] = Fig("ret_gap_by_dimension", "retention", F.fig_gap_by_dimension(
-        gaps, "Which dimension separates D7 retention the most? (pp)", tk), tk)
+        gaps, "Which dimension separates D7 retention the most? (pp, best − worst segment)", tk), tk)
 
     # ------------------------------------------------------------ ad experiment
     arms = F.arm_table(t["conv_t"], t["n_t"], t["conv_c"], t["n_c"])
     tk = (f"Users shown ads converted at {pct(t['rate_t'], 2)} vs {pct(t['rate_c'], 2)} for PSA: "
           f"+{pp(t['abs_lift'])} (95% CI {pp(t['abs_ci_low'])} to {pp(t['abs_ci_high'])}), "
-          f"a {pct(t['rel_lift'], 0)} relative lift.")
+          f"a {pct(t['rel_lift'], 0)} relative lift ({fmt_p(t['p_value'])}).")
     out["ad_rates"] = Fig("ad_rates", "experiment", F.fig_arm_rates(
         arms, "Conversion rate by experiment arm (%, 95% CI)", tk), tk)
 
     b = ad["bootstrap"]
-    tk = (f"None of {b['n_boot']:,} bootstrap resamples shows a lift ≤ 0; the 95% interval is "
-          f"{pp(b['abs_ci'][0])} to {pp(b['abs_ci'][1])}, matching the analytic CI.")
+    tk = (f"The bootstrap interval ({pp(b['abs_ci'][0])} to {pp(b['abs_ci'][1])}) matches the analytic interval "
+          f"({pp(t['abs_ci_low'])} to {pp(t['abs_ci_high'])}): with this many users the normal approximation is fine.")
     out["ad_bootstrap"] = Fig("ad_bootstrap", "experiment", F.fig_bootstrap(
         caches["boot_ad"]["abs_lift"].to_numpy(), tuple(b["abs_ci"]), t["abs_lift"],
-        "Bootstrap distribution of the ad lift (pp, 10,000 resamples)", tk), tk)
+        f"Bootstrap distribution of the ad lift (pp, {b['n_boot']:,} resamples)", tk), tk)
 
     pw = ad["power"]
-    tk = (f"With a 96/4 split we could only detect lifts ≥ {pp(pw['mde_current']['mde_abs'])}; the same "
-          f"588K users split 50/50 would detect {pp(pw['mde_if_5050_same_total']['mde_abs'])}. "
-          f"The observed {pp(t['abs_lift'])} clears both.")
+    ses = pw["power_at_relative_lift"][str(pw["smallest_lift_of_interest_rel"])]
+    tk = (f"At 96/4 the test had 80% power only for lifts ≥ {pp(pw['mde_current']['mde_abs'])} "
+          f"({pct(pw['mde_current']['mde_rel'], 0)} relative); the same {(t['n_t'] + t['n_c'])/1000:,.0f}K users split 50/50 "
+          f"would detect {pp(pw['mde_if_5050_same_total']['mde_abs'])}. For the smallest lift worth acting on "
+          f"({pct(ses['rel'], 0)} relative = {pp(ses['abs'])}), power was {pct(ses['power_current_split'], 0)} at 96/4 vs "
+          f"{pct(ses['power_5050_same_total'], 0)} at 50/50.")
     out["ad_mde_split"] = Fig("ad_mde_split", "experiment", F.fig_mde_by_split(
-        t["rate_c"], t["n_t"] + t["n_c"], C.INTENDED_AD_SHARE, t["abs_lift"], C.ALPHA, C.POWER,
+        t["rate_c"], t["n_t"] + t["n_c"], C.INTENDED_AD_SHARE, ses["abs"], C.ALPHA, C.POWER,
         "Minimum detectable lift vs. share of users in treatment (pp)", tk), tk)
 
-    tk = (f"This sample has 80% power for a true lift of {pp(pw['mde_current']['mde_abs'])}; a lift the size "
-          f"of the observed {pp(t['abs_lift'])} would be detected essentially every time "
-          f"(power {pct(pw['achieved_power_at_observed'], 0)}).")
+    tk = (f"80% power for a true lift ≥ {pp(pw['mde_current']['mde_abs'])}; for the smallest lift we'd act on "
+          f"({pct(ses['rel'], 0)} relative = {pp(ses['abs'])}) this design had only {pct(ses['power_current_split'], 0)} power. "
+          f"Power describes the design; it is not evaluated at the observed effect.")
     out["ad_power_curve"] = Fig("ad_power_curve", "experiment", F.fig_power_curve(
-        t["rate_c"], t["n_t"], t["n_c"], C.ALPHA, t["abs_lift"], "Power to detect a true lift, current sample (%)",
-        tk), tk)
+        t["rate_c"], t["n_t"], t["n_c"], C.ALPHA, ses["abs"], "Power to detect a true lift, current sample (%)",
+        tk, max_lift_pp=0.6), tk)
 
     bz = ad["business"]
     inc = bz["incremental_conversions"]
-    tk = (f"≈{inc['point']:,.0f} incremental conversions (95% CI {inc['ci_low']:,.0f}–{inc['ci_high']:,.0f}) over "
-          f"{bz['impressions_ad_group']/1e6:.1f}M impressions: at ${bz['value_per_conversion_usd']:.0f} per conversion "
-          f"(assumed) the campaign breaks even below ${bz['breakeven_cpm_usd']['point']:.2f} CPM.")
+    tk = (f"≈{inc['point']:,.0f} incremental conversions (95% CI {inc['ci_low']:,.0f}–{inc['ci_high']:,.0f}), only "
+          f"{pct(bz['share_of_ad_conversions_incremental'], 0)} of ad-arm conversions, so last-touch attribution would "
+          f"overstate the campaign {bz['last_touch_overstatement_x']:.1f}×. At {usd(bz['value_per_conversion_usd'], 0)} per "
+          f"conversion (assumed) it breaks even below {usd(bz['breakeven_cpm_usd']['point'])} CPM.")
     out["ad_breakeven"] = Fig("ad_breakeven", "experiment", F.fig_breakeven(
         inc["point"], inc["ci_low"], inc["ci_high"], bz["impressions_ad_group"], bz["value_per_conversion_usd"],
         None, "Breakeven CPM by value per conversion (USD)", tk), tk)
 
     users = caches["users"]
     bal = {x["variable"]: x for x in ad["balance"]}
-    tk = (f"Arms differ slightly in peak ad day (Cramér's V {bal['most_ads_day']['cramers_v']:.3f}); "
-          f"these are post-assignment fields, so segment results are exploratory.")
+    tk = (f"Arms differ slightly in peak ad day (Cramér's V {bal['most_ads_day']['cramers_v']:.3f}); peak day/hour are "
+          f"recorded after assignment, so segment results are exploratory.")
     out["ad_balance_day"] = Fig("ad_balance_day", "sanity", F.fig_balance(
         users, "most_ads_day", "Peak ad day: share of each arm's users (%)", tk, order=C.DAY_ORDER), tk)
-    tk = (f"Ad volume per user is near-identical (mean {ad['groups']['ad']['mean_ads']:.1f} vs "
-          f"{ad['groups']['psa']['mean_ads']:.1f}), though the shape differs a little (Cramér's V "
-          f"{bal['exposure_bucket']['cramers_v']:.3f}).")
+    sh = ad["heterogeneity"]["exposure_bucket"]["arm_shares"]
+    tk = (f"Mean ads per user match ({ad['groups']['ad']['mean_ads']:.1f} vs {ad['groups']['psa']['mean_ads']:.1f}) but the "
+          f"shapes differ: {pct(sh['1-5']['psa'], 0)} of PSA users vs {pct(sh['1-5']['ad'], 0)} of ad users saw 1–5 ads; "
+          f"{pct(sh['11-20']['psa'], 0)} vs {pct(sh['11-20']['ad'], 0)} saw 11–20. Exposure is shaped after assignment, "
+          f"so it stays an exploratory cut, never a covariate.")
     out["ad_balance_exposure"] = Fig("ad_balance_exposure", "sanity", F.fig_balance(
         users, "exposure_bucket", "Total ads seen: share of each arm's users (%)", tk,
         order=C.EXPOSURE_LABELS, xtitle="Total ads seen (bucket)"), tk)
@@ -155,45 +178,84 @@ def build_catalog(res: dict, caches: dict[str, pd.DataFrame]) -> dict[str, Fig]:
     het = ad["heterogeneity"]
     day = S.segment_lifts(cells, "most_ads_day", "ad", "psa", alpha=C.ALPHA, method="holm", order=C.DAY_ORDER)
     hd = het["most_ads_day"]
-    tk = (f"Lift ranges from {hd['min_lift_pp']:.2f} pp ({hd['min_lift_segment']}) to {hd['max_lift_pp']:.2f} pp "
-          f"({hd['max_lift_segment']}); interaction test p = {hd['lrt']['p_value']:.3f}: weak evidence of a real "
-          f"day effect, not enough to re-plan spend.")
+    dd = day.set_index("most_ads_day")
+    tk = (f"Lift differs by peak day (interaction {fmt_p(hd['lrt']['p_value'])}; {hd['lrt_p_bonferroni_3_dims']:.2f} after "
+          f"allowing for 3 dimensions explored): Tuesday-peak users +{dd.loc['Tuesday', 'abs_lift']*100:.2f} pp "
+          f"({dd.loc['Tuesday', 'diff_vs_rest']*100:+.2f} pp vs other days), Thursday-peak users "
+          f"+{dd.loc['Thursday', 'abs_lift']*100:.2f} pp; both survive Holm. 'Peak day' describes the user, not a day we "
+          f"can buy, so this motivates a daypart test, not a reallocation.")
     out["het_day"] = Fig("het_day", "heterogeneity", F.fig_lift_forest(
-        day, "most_ads_day", "Ad lift by peak ad day (pp, 95% CI, Holm-adjusted significance)", tk,
+        day, "most_ads_day", "Ad lift by peak ad day (pp, 95% CI; filled = differs from other days, Holm)", tk,
         overall_lift=t["abs_lift"], seg_title="Day with most ads"), tk)
 
     hour = S.segment_lifts(cells, "most_ads_hour", "ad", "psa", alpha=C.ALPHA, method="holm", order=list(range(24)))
     hh = het["most_ads_hour"]
-    tk = (f"{hh['n_sig_unadjusted']} of 24 hours look 'significant' unadjusted but only {hh['n_sig_holm']} "
-          f"{'survives' if hh['n_sig_holm'] == 1 else 'survive'} Holm correction; interaction test p = {hh['lrt']['p_value']:.2f}: no evidence lift differs by hour.")
+    tk = (f"No evidence that lift differs by hour (interaction {fmt_p(hh['lrt']['p_value'])}); no hour differs from "
+          f"the others after correction. {hh['segments_with_zero_control_conversions']} night hours have zero control "
+          f"conversions, so hourly estimates there are unreliable.")
     out["het_hour"] = Fig("het_hour", "heterogeneity", F.fig_lift_forest(
-        hour, "most_ads_hour", "Ad lift by peak ad hour (pp, 95% CI, Holm-adjusted significance)", tk,
+        hour, "most_ads_hour", "Ad lift by peak ad hour (pp, 95% CI; filled = differs from other hours, Holm)", tk,
         overall_lift=t["abs_lift"], seg_title="Hour with most ads (0–23)"), tk)
+
+    dp = S.segment_lifts(cells, "daypart", "ad", "psa", alpha=C.ALPHA, method="holm", order=C.DAYPART_ORDER)
+    hp = het["daypart"]
+    nc_ = hp["night_counts"]["psa"]
+    tk = (f"Grouped into dayparts the interaction test gives {fmt_p(hp['lrt']['p_value'])}, driven entirely by Night (0–5), "
+          f"where the control arm has {nc_['conversions']} conversion among {nc_['users']:,} users; without it, "
+          f"{fmt_p(hp['lrt_excluding_night']['p_value'])}. No reliable time-of-day pattern.")
+    out["het_daypart"] = Fig("het_daypart", "heterogeneity", F.fig_lift_forest(
+        dp, "daypart", "Ad lift by daypart of peak exposure (pp, 95% CI; filled = differs from other dayparts, Holm)", tk,
+        overall_lift=t["abs_lift"], seg_title="Daypart (hour with most ads)"), tk)
 
     expo = S.segment_lifts(cells, "exposure_bucket", "ad", "psa", alpha=C.ALPHA, method="holm",
                            order=C.EXPOSURE_LABELS)
     e = expo.set_index("exposure_bucket")
-    tk = (f"Lift is ~0 for users who saw ≤ 20 ads, reaches {e.loc['51-100', 'abs_lift']*100:.1f}–"
-          f"{e.loc['101-200', 'abs_lift']*100:.1f} pp at 51–200 ads, and is indistinguishable from 0 past 200 "
-          f"(only {int(e.loc['200+', 'n_c'])} control users). Exposure is post-assignment: a hypothesis, not a result.")
+    con = het["exposure_bucket"]["concentration"]
+    tk = (f"No detectable lift for the {pct(con['share_users_le_20_ads'], 0)} of users who saw ≤ 20 ads; "
+          f"{e.loc['36-50', 'abs_lift']*100:.1f}–{e.loc['101-200', 'abs_lift']*100:.1f} pp at 36–200 ads "
+          f"({pct(con['share_incremental_conversions_36_200'], 0)} of incremental conversions, from "
+          f"{pct(con['share_ad_users_36_200'], 0)} of ad users); no usable estimate past 200 ads (CI "
+          f"{con['top_bucket_ci_pp'][0]:.1f} to {con['top_bucket_ci_pp'][1]:+.1f} pp, {con['top_bucket_control_users']} "
+          f"control users). Exposure tracks how active a user is (control conversion rises from "
+          f"{pct(con['control_rate_lowest_bucket'])} to {pct(con['control_rate_highest_bucket'])}): the lift lives in heavy "
+          f"users; this is not a frequency curve.")
     out["het_exposure"] = Fig("het_exposure", "heterogeneity", F.fig_dose_response(
         expo, "Conversion rate by total ads seen, ad vs PSA (%)", tk), tk)
     out["het_exposure_forest"] = Fig("het_exposure_forest", "heterogeneity", F.fig_lift_forest(
-        expo, "exposure_bucket", "Ad lift by total ads seen (pp, 95% CI, Holm-adjusted significance)", tk,
+        expo, "exposure_bucket", "Ad lift by total ads seen (pp, 95% CI; filled = differs from other buckets, Holm)", tk,
         overall_lift=t["abs_lift"], seg_title="Total ads seen (bucket)"), tk)
 
     # ------------------------------------------------------------ gate experiment
     g = ck["gate"]
     g7, g1 = g["retention_7"], g["retention_1"]
-    tk = (f"gate_40 has lower D7 retention ({pct(g7['rate_t'], 2)} vs {pct(g7['rate_c'], 2)}, "
-          f"{g7['abs_lift']*100:+.2f} pp, 95% CI {pp(g7['abs_ci_low'])} to {pp(g7['abs_ci_high'])}); "
-          f"D1 is directionally lower too.")
+    tk = (f"gate_40 shows lower D7 retention ({pct(g7['rate_t'], 2)} vs {pct(g7['rate_c'], 2)}: "
+          f"{g7['abs_lift']*100:+.2f} pp, 95% CI {g7['abs_ci_low']*100:.2f} to {g7['abs_ci_high']*100:.2f}). "
+          f"D1 (guardrail) is {g1['abs_lift']*100:+.2f} pp (CI {g1['abs_ci_low']*100:.2f} to {g1['abs_ci_high']*100:+.2f}), "
+          f"so a D1 drop of up to {abs(g1['abs_ci_low'])*100:.1f} pp can't be ruled out. SRM warning: not certified.")
     out["gate_rates"] = Fig("gate_rates", "gate", F.fig_gate_rates(
         g, "D1 and D7 retention by gate version (%, 95% CI)", tk), tk)
-    tk = (f"{pct(1 - g7['boot_share_ge_0'], 1)} of bootstrap draws put gate_40's D7 below gate_30; for D1 it is "
-          f"{pct(1 - g1['boot_share_ge_0'], 1)}. The D7 drop is consistent, the D1 drop is not conclusive.")
+    tk = (f"The bootstrap agrees with the analytic intervals: D7 {g7['abs_lift']*100:+.2f} pp (95% CI "
+          f"{g7['boot_abs_ci'][0]*100:.2f} to {g7['boot_abs_ci'][1]*100:.2f}); D1 {g1['abs_lift']*100:+.2f} pp "
+          f"(CI {g1['boot_abs_ci'][0]*100:.2f} to {g1['boot_abs_ci'][1]*100:+.2f}).")
     out["gate_bootstrap"] = Fig("gate_bootstrap", "gate", F.fig_gate_bootstrap(
         caches["boot_gate"], g, "Bootstrap distribution of gate_40 − gate_30 retention (pp)", tk), tk)
+
+    nc = g["negative_control"]
+    rows = pd.DataFrame([
+        {"label": "All players (primary result)", "role": "main", **g7},
+        {"label": "Never reached level 30 (negative control)", "role": "control", **nc["never_reached_30"]["retention_7"]},
+        {"label": "Reached level 30", "role": "other", **nc["reached_30"]["retention_7"]},
+    ])
+    ncr = nc["never_reached_30"]["retention_7"]
+    wc = g["worst_case_bound"]
+    hi_txt = "just below 0" if -0.005 < ncr["abs_ci_high"] * 100 < 0 else f"{ncr['abs_ci_high']*100:.2f}"
+    tk = (f"Players who never reached level 30 met no gate in either version, yet gate_40 shows "
+          f"{ncr['abs_lift']*100:+.2f} pp D7 (CI {ncr['abs_ci_low']*100:.2f} to {hi_txt}, "
+          f"{fmt_p(ncr['p_value'])}): the arms differ in composition, consistent with the SRM warning. Even if gate_40's "
+          f"{wc['excess_players_gate_40']} extra players never returned, the D7 gap would still be "
+          f"{wc['d7_diff_if_excess_removed']*100:+.2f} pp.")
+    out["gate_negative_control"] = Fig("gate_negative_control", "gate", F.fig_effect_by_stratum(
+        rows, "D7 retention difference by stratum: a negative-control check (pp, 95% CI)", tk), tk)
 
     return out
 
