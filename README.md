@@ -119,6 +119,7 @@ make app        # streamlit run dashboard/app.py
   - `python run.py --only analysis` rebuilds the numbers and caches only.
   - `python -m src.sql_check` runs every SQL file and reconciles it with `reports/results.json`.
   - `make test` runs the dashboard tests.
+  - `make notebooks` regenerates the three notebooks from their builders in `scripts/notebooks/` (each quoted number is a placeholder re-checked when the notebook runs), then executes and exports them.
 - **Reproducibility.** All randomness uses a fixed seed (`config.yaml`), so two runs give identical numbers. Every number in this README comes from [reports/results.json](reports/results.json).
 
 ## Repository layout
@@ -130,5 +131,6 @@ src/           config, data cleaning, stats tests, retention, analysis pipeline,
 notebooks/     01_eda, 02_retention, 03_ab_test (TL;DR first)
 dashboard/     Streamlit app (7 pages) reading parquet caches only
 reports/       results.json, tables, figures, screenshots, report.html, executive summary, notebook HTML exports
+scripts/       notebook builders (scripts/notebooks/), README screenshots, fresh-clone check
 run.py         one command for the whole pipeline (also: make all)
 ```

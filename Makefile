@@ -1,7 +1,7 @@
 # One-command build. `make all` = setup check + full pipeline.
 PY ?= .venv/bin/python
 
-.PHONY: all setup pipeline analysis sql app test clean
+.PHONY: all setup pipeline analysis sql notebooks app test clean
 
 all: pipeline
 
@@ -17,6 +17,12 @@ analysis:         ## fast path: just recompute numbers + caches (no notebooks / 
 
 sql:              ## run sql/*.sql in DuckDB and reconcile with reports/results.json
 	$(PY) -m src.sql_check
+
+notebooks:        ## regenerate the notebooks from scripts/notebooks/, then execute + export them
+	$(PY) scripts/notebooks/build_01_eda.py
+	$(PY) scripts/notebooks/build_02_retention.py
+	$(PY) scripts/notebooks/build_03_ab_test.py
+	$(PY) run.py --only notebooks
 
 test:             ## dashboard smoke + interaction tests (Streamlit AppTest)
 	$(PY) tests/test_dashboard_a.py
