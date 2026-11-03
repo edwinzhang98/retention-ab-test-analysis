@@ -111,17 +111,26 @@ def percentile_ci(x, alpha: float = 0.05) -> tuple[float, float]:
 
 
 # ------------------------------------------------------------------ SRM
-def srm_check(n_t: int, n_c: int, intended_share_t: float, threshold: float = 0.001) -> dict:
+def srm_check(n_t: int, n_c: int, intended_share_t: float, threshold: float = 0.001,
+              warn_threshold: float = 0.01) -> dict:
     """Sample Ratio Mismatch: chi-square goodness of fit of observed arm sizes
-    to the intended allocation. Industry convention flags p < 0.001."""
+    to the intended allocation.
+
+    Two-level rule (see docs/assumptions.md):
+      p < threshold (0.001)          -> FAIL: stop, results are not trustworthy
+      threshold <= p < warn (0.01)   -> WARN: investigate assignment before certifying results
+      p >= warn                      -> PASS
+    """
     n = n_t + n_c
     exp = np.array([n * intended_share_t, n * (1 - intended_share_t)])
     chi2, p = stats.chisquare([n_t, n_c], exp)
+    status = "FAIL" if p < threshold else ("WARN" if p < warn_threshold else "PASS")
     return {
         "n_t": int(n_t), "n_c": int(n_c),
         "observed_share_t": n_t / n, "intended_share_t": intended_share_t,
         "expected_t": float(exp[0]), "expected_c": float(exp[1]),
         "chi2": float(chi2), "p_value": float(p), "threshold": threshold,
+        "warn_threshold": warn_threshold, "status": status,
         "flag": bool(p < threshold),
     }
 
